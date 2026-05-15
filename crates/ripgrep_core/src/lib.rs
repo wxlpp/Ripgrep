@@ -134,8 +134,8 @@ mod sink_tests {
     use crossbeam_channel::unbounded;
     use grep_regex::RegexMatcher;
     use grep_searcher::SearcherBuilder;
-    use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
 
     #[test]
     fn sink_emits_match_per_line() {
@@ -167,8 +167,8 @@ mod sink_tests {
 mod cancel_tests {
     use super::cancel::CancelToken;
     use std::sync::Arc;
-    use std::time::Duration;
     use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn fresh_token_not_cancelled() {
@@ -204,7 +204,6 @@ mod cancel_tests {
 mod walker_tests {
     use super::options::SearchRequest;
     use super::search::build_walker;
-    use std::path::Path;
 
     fn req() -> SearchRequest {
         SearchRequest {
@@ -231,7 +230,7 @@ mod walker_tests {
         let walker = build_walker(&r).unwrap().build();
         walker
             .filter_map(Result::ok)
-            .filter(|d| d.file_type().map_or(false, |t| t.is_file()))
+            .filter(|d| d.file_type().is_some_and(|t| t.is_file()))
             .map(|d| d.into_path().to_string_lossy().to_string())
             .collect()
     }
@@ -295,7 +294,10 @@ mod walker_tests {
         let mut r = req();
         r.paths = vec!["/no/such/path".into()];
         let result = build_walker(&r);
-        assert!(matches!(result, Err(crate::error::RipgrepError::PathNotFound(_))));
+        assert!(matches!(
+            result,
+            Err(crate::error::RipgrepError::PathNotFound(_))
+        ));
     }
 }
 
@@ -353,8 +355,8 @@ mod search_e2e_tests {
     fn empty_result_when_no_match() {
         let r = search_blocking(req("ZZZZ_NOPE"), Arc::new(CancelToken::new(None))).unwrap();
         assert_eq!(r.matches.len(), 0);
-        assert_eq!(r.truncated, false);
-        assert_eq!(r.cancelled, false);
+        assert!(!r.truncated);
+        assert!(!r.cancelled);
     }
 }
 
@@ -394,7 +396,7 @@ mod context_tests {
         r.pattern = r"match[\s\S]*match".into();
         r.multiline = true;
         let res = search_blocking(r, Arc::new(CancelToken::new(None))).unwrap();
-        assert!(res.matches.len() >= 1);
+        assert!(!res.matches.is_empty());
     }
 }
 
@@ -406,7 +408,7 @@ mod limits_tests {
 
     fn req(pattern: &str) -> super::options::SearchRequest {
         let mut r = super::search_e2e_tests::req(pattern);
-        r.respect_gitignore = false;   // ensure we have lots of files to count
+        r.respect_gitignore = false; // ensure we have lots of files to count
         r.include_hidden = true;
         r
     }
@@ -430,14 +432,15 @@ mod limits_tests {
 
     #[test]
     fn timeout_marks_result_cancelled() {
-        let mut r = req("xxxxxxxxxxxxxxxxx_no_match");  // forces full scan
-        r.timeout_ms = Some(1);   // 1 ms — extremely tight
-        // Big enough fixture: just our mini, but we set timeout to 0 so it trips
-        // even on tiny dirs.
+        let mut r = req("xxxxxxxxxxxxxxxxx_no_match"); // forces full scan
+        r.timeout_ms = Some(1); // 1 ms — extremely tight
+                                // Big enough fixture: just our mini, but we set timeout to 0 so it trips
+                                // even on tiny dirs.
         let res = search_blocking(
             r,
-            Arc::new(CancelToken::new(Some(0))),  // pre-tripped
-        ).unwrap();
+            Arc::new(CancelToken::new(Some(0))), // pre-tripped
+        )
+        .unwrap();
         assert!(res.cancelled);
     }
 }
@@ -480,7 +483,11 @@ mod external_cancel_tests {
         let elapsed = start.elapsed();
         // tiny fixture finishes in <50ms anyway, so cancellation may or may not
         // have kicked in; the assertion is about *no panic / no hang*.
-        assert!(elapsed < Duration::from_secs(2), "search hung: {:?}", elapsed);
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "search hung: {:?}",
+            elapsed
+        );
         let _ = res;
     }
 }

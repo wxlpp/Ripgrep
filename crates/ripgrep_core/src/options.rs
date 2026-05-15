@@ -40,5 +40,6 @@ pub struct SearchResult {
     pub truncated: bool,
     pub cancelled: bool,
     pub files_searched: u64,
-    pub elapsed_ms: u64,
+    #[allow(dead_code)]
+    pub elapsed_ms: u64, // Exported to Swift via UniFFI
 }

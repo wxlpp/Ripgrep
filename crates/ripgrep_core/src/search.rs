@@ -95,7 +95,7 @@ fn search_blocking_inner(
                 Ok(e) => e,
                 Err(_) => return WalkState::Continue,
             };
-            if !entry.file_type().map_or(false, |t| t.is_file()) {
+            if !entry.file_type().is_some_and(|t| t.is_file()) {
                 return WalkState::Continue;
             }
             file_counter.fetch_add(1, Ordering::Relaxed);
@@ -120,9 +120,7 @@ fn search_blocking_inner(
 
     drop(tx);
     let mut matches: Vec<SearchMatch> = rx.iter().collect();
-    matches.sort_by(|a, b| {
-        (a.path.as_str(), a.line_number).cmp(&(b.path.as_str(), b.line_number))
-    });
+    matches.sort_by(|a, b| (a.path.as_str(), a.line_number).cmp(&(b.path.as_str(), b.line_number)));
 
     let truncated = if let Some(max) = max_matches {
         if matches.len() > max {
@@ -182,7 +180,8 @@ pub fn build_walker(req: &SearchRequest) -> Result<WalkBuilder, RipgrepError> {
         for t in &req.file_types {
             tb.select(t);
         }
-        let types = tb.build()
+        let types = tb
+            .build()
             .map_err(|e| RipgrepError::Io(format!("type filter error: {e}")))?;
         wb.types(types);
     }
@@ -197,7 +196,8 @@ pub fn build_walker(req: &SearchRequest) -> Result<WalkBuilder, RipgrepError> {
             ob.add(&format!("!{g}"))
                 .map_err(|e| RipgrepError::Io(format!("glob error: {e}")))?;
         }
-        let overrides = ob.build()
+        let overrides = ob
+            .build()
             .map_err(|e| RipgrepError::Io(format!("override error: {e}")))?;
         wb.overrides(overrides);
     }
