@@ -11,6 +11,108 @@ pub fn build_matcher(req: &SearchRequest) -> Result<RegexMatcher, RipgrepError> 
         .map_err(|e| RipgrepError::InvalidPattern(e.to_string()))
 }
 
+use crate::cancel::CancelToken;
+use crate::options::{SearchMatch, SearchResult};
+use crate::sink::ChannelSink;
+use crossbeam_channel::unbounded;
+use grep_searcher::SearcherBuilder;
+use ignore::WalkState;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
+
+pub fn search_blocking(
+    req: SearchRequest,
+    cancel: Arc<CancelToken>,
+) -> Result<SearchResult, crate::error::RipgrepError> {
+    let start = Instant::now();
+
+    let matcher = build_matcher(&req)?;
+    let walker = build_walker(&req)?.build_parallel();
+
+    let (tx, rx) = unbounded::<SearchMatch>();
+    let match_counter = Arc::new(AtomicUsize::new(0));
+    let file_counter = Arc::new(AtomicUsize::new(0));
+
+    let max_matches = req.max_matches.map(|n| n as usize);
+    let max_files = req.max_files.map(|n| n as usize);
+    let before = req.before_context as usize;
+    let after = req.after_context as usize;
+    let multiline = req.multiline;
+
+    walker.run(|| {
+        let tx = tx.clone();
+        let cancel = Arc::clone(&cancel);
+        let match_counter = Arc::clone(&match_counter);
+        let file_counter = Arc::clone(&file_counter);
+        let matcher = matcher.clone();
+        Box::new(move |entry| {
+            if cancel.is_cancelled() {
+                return WalkState::Quit;
+            }
+            if let Some(max) = max_matches {
+                if match_counter.load(Ordering::Relaxed) >= max {
+                    return WalkState::Quit;
+                }
+            }
+            if let Some(max) = max_files {
+                if file_counter.load(Ordering::Relaxed) >= max {
+                    return WalkState::Quit;
+                }
+            }
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => return WalkState::Continue,
+            };
+            if !entry.file_type().map_or(false, |t| t.is_file()) {
+                return WalkState::Continue;
+            }
+            file_counter.fetch_add(1, Ordering::Relaxed);
+
+            let path = entry.path().to_string_lossy().to_string();
+            let mut sink = ChannelSink::new(
+                path,
+                tx.clone(),
+                Arc::clone(&cancel),
+                Arc::clone(&match_counter),
+                matcher.clone(),
+                before,
+            );
+            let mut sb = SearcherBuilder::new();
+            sb.before_context(before);
+            sb.after_context(after);
+            sb.multi_line(multiline);
+            let _ = sb.build().search_path(&matcher, entry.path(), &mut sink);
+            WalkState::Continue
+        })
+    });
+
+    drop(tx);
+    let mut matches: Vec<SearchMatch> = rx.iter().collect();
+    matches.sort_by(|a, b| {
+        (a.path.as_str(), a.line_number).cmp(&(b.path.as_str(), b.line_number))
+    });
+
+    let truncated = if let Some(max) = max_matches {
+        if matches.len() > max {
+            matches.truncate(max);
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    Ok(SearchResult {
+        matches,
+        truncated,
+        cancelled: cancel.is_cancelled(),
+        files_searched: file_counter.load(Ordering::Relaxed) as u64,
+        elapsed_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
 use ignore::overrides::OverrideBuilder;
 use ignore::types::TypesBuilder;
 use ignore::WalkBuilder;
