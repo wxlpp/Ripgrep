@@ -123,6 +123,7 @@ Ripgrep/
 let package = Package(
     name: "RipgrepKit",
     platforms: [.iOS(.v15), .macOS(.v12)],
+    // swiftLanguageVersions set elsewhere in the manifest; v6 required (see §10a).
     products: [
         .library(name: "RipgrepKitCore", targets: ["RipgrepKitCore"]),
         .library(name: "RipgrepKitTool", targets: ["RipgrepKitTool"]),
@@ -162,7 +163,7 @@ Consumers of just the typed API depend on `RipgrepKitCore` and pay no `argument-
 | `ios-arm64_x86_64-simulator` | `aarch64-apple-ios-sim` + `x86_64-apple-ios` | lipo'd fat |
 | `macos-arm64_x86_64` | `aarch64-apple-darwin` + `x86_64-apple-darwin` | lipo'd fat |
 
-**3 XCFramework slices, 5 Rust targets total.** Distributed via GitHub Release as `RipgrepCore.xcframework.zip` with SHA256 checksum committed in `Package.swift`.
+**3 XCFramework slices, 5 Rust target triples (single `ripgrep_core` cargo target).** Distributed via GitHub Release as `RipgrepCore.xcframework.zip` with SHA256 checksum committed in `Package.swift`.
 
 ## 5. Rust Core (`ripgrep_core`)
 
@@ -174,6 +175,7 @@ ignore = "0.4"
 grep-regex = "0.1"
 grep-searcher = "0.1"
 globset = "0.4"
+crossbeam-channel = "0.5"     # lock-free MPSC for collecting matches from WalkParallel
 uniffi = "0.28"
 thiserror = "2"
 ```
@@ -198,7 +200,8 @@ pub struct SearchRequest {
     pub before_context: u32,
     pub after_context: u32,
     pub max_matches: Option<u32>,        // global cap on matches across all files
-    pub max_files: Option<u32>,          // hard cap on files visited (cancellation safety net)
+    pub max_files: Option<u32>,          // cap on regular files whose contents are searched
+                                         // (directories and skipped binary files are not counted)
     pub max_file_size_bytes: Option<u64>,
     pub timeout_ms: Option<u64>,         // wall-clock cap; deadline-based cancel
 }
@@ -228,15 +231,19 @@ pub struct SearchResult {
 #[derive(uniffi::Object)]
 pub struct CancelToken {
     flag: Arc<AtomicBool>,
-    deadline: Mutex<Option<Instant>>,
+    deadline: Option<Instant>,           // immutable; set at construction
 }
 
 #[uniffi::export]
 impl CancelToken {
+    /// `timeout_ms == None` means no deadline; only explicit `cancel()` will trip the token.
     #[uniffi::constructor]
-    pub fn new() -> Arc<Self> { /* ... */ }
+    pub fn new(timeout_ms: Option<u64>) -> Arc<Self> { /* ... */ }
     pub fn cancel(&self) { /* set flag */ }
-    pub fn is_cancelled(&self) -> bool { /* check flag or deadline */ }
+    pub fn is_cancelled(&self) -> bool {
+        self.flag.load(Ordering::Relaxed)
+            || self.deadline.is_some_and(|d| Instant::now() >= d)
+    }
 }
 
 #[derive(uniffi::Error, thiserror::Error, Debug)]
@@ -270,14 +277,20 @@ search_blocking(req, cancel)
        types(TypesBuilder for file_types),
        max_filesize(max_file_size_bytes),
        overrides(OverrideBuilder for include/exclude globs)
-  ④ Set deadline = Instant::now() + timeout_ms (if any) on cancel token
-  ⑤ WalkParallel.run with shared:
+  ④ CancelToken constructed with deadline derived from req.timeout_ms (if any).
+     Caller may also share their own CancelToken (Swift wires Task.cancel()).
+  ⑤ Create crossbeam_channel::unbounded::<SearchMatch>() (lock-free MPSC).
+     WalkParallel.run with shared:
        - AtomicUsize match counter, AtomicUsize file counter
-       - cancel token (checked at every dir entry → WalkState::Quit if cancelled)
-       - Mutex<Vec<SearchMatch>> sink
+       - cancel token (checked at every dir entry → WalkState::Quit if tripped)
+       - sender end of the channel
   ⑥ Per file: SearcherBuilder(before/after_context, multi_line) + custom Sink
-       Sink checks cancel.is_cancelled() between events → returns Err to abort file
-  ⑦ Sort results by (path, line_number); truncate at max_matches
+       Sink::matched / Sink::context push SearchMatch into the channel.
+       Sink checks cancel.is_cancelled() at minimum every 100 events
+       (matched + context combined); returning Err aborts the current file
+       and propagates as WalkState::Quit on the next dir entry.
+  ⑦ Drop sender; drain receiver into Vec<SearchMatch>.
+     Sort by (path, line_number); truncate at max_matches.
   ⑧ Return SearchResult { matches, truncated, cancelled, ... }
 ```
 
@@ -330,10 +343,10 @@ public enum Ripgrep {
         public let truncated: Bool
         public let cancelled: Bool
         public let filesSearched: Int
-        public let elapsedMs: Int
+        public let elapsed: Duration              // FFI carries u64 ms; Swift exposes Duration
 
-        public func formattedAsText() -> String        // path:line:text
-        public func formattedAsJSONLines() -> String   // rg --json style
+        public func formattedAsText() -> String        // see format spec below
+        public func formattedAsJSONLines() -> String   // per-match JSON objects only
     }
 
     public enum Error: Swift.Error, Sendable {
@@ -359,7 +372,8 @@ public enum Ripgrep {
 **Cancellation wiring** (sketch):
 ```swift
 public static func search(...) async throws -> SearchResult {
-    let token = CancelToken()
+    let timeoutMs = options.timeout.map { UInt64($0.components.seconds * 1000) }
+    let token = CancelToken(timeoutMs: timeoutMs)
     return try await withTaskCancellationHandler {
         try await Task.detached(priority: .userInitiated) {
             try Ripgrep.searchBlocking(request: request.toFFI(), cancel: token)
@@ -369,6 +383,23 @@ public static func search(...) async throws -> SearchResult {
     }
 }
 ```
+
+**Bounds checks at FFI boundary** (M5 — Int → u32 wrap-around safety):
+`Options.toFFI()` calls `precondition(value >= 0, "...")` for every `Int` field that maps to a Rust unsigned type (`beforeContext`, `afterContext`, `maxMatches`, `maxFiles`, `maxFileSizeBytes`). A negative value would otherwise wrap to `u32::MAX` / `u64::MAX` and cause OOM-class behavior inside the walker.
+
+**`formattedAsText()` output spec** (m3):
+Mirrors `rg`'s grouped default output — context lines use `-` separator instead of `:`, blank line separates per-file groups (no separator between same-file matches), no leading file header.
+
+```text
+src/foo.swift-8-let x = 1
+src/foo.swift:10:    // TODO: rename
+src/foo.swift-12-let z = 3
+
+src/bar.rs:5:fn fixme() {
+src/bar.rs-6-    // TODO: handle error
+```
+
+When matches and context lines for the same file are interleaved, ordering follows `(path, lineNumber)` deterministically; rule for omitting `--` between two matches with no overlap deferred to implementation (mirror rg's `before_context_break` behavior).
 
 ### 6.2 `RipgrepKitTool` — CLI parsing + LLM helpers
 
@@ -445,10 +476,11 @@ struct RipgrepArgs: ParsableCommand {
 
 ### 6.3 Tokenizer
 
-`func tokenize(_ s: String) throws -> [String]` — minimal shell-style splitter:
+`func tokenize(_ s: String) throws(Ripgrep.Error) -> [String]` — minimal shell-style splitter (Swift 6 typed throws so callers get static guarantees the only error type is `Ripgrep.Error`).
+
 - Splits on unquoted whitespace
 - Honors single quotes (literal), double quotes (with `\` escapes), backslash escapes outside quotes
-- Supports `--flag=value` syntax (passed through to argument-parser)
+- **`--flag=value` semantics:** the `=` belongs to the same token as `--flag`. Anything after `=` (until the next unquoted whitespace) is the *value portion* of the same token; quotes inside the value portion are processed (stripped, escapes applied) but `=` does **not** trigger re-splitting. So `--glob='*.swift'` becomes the single token `--glob=*.swift`; `--glob="hello world"` becomes `--glob=hello world` (one token).
 - **No** variable expansion, command substitution, or glob expansion
 
 Throws `Ripgrep.Error.invalidArguments` on unbalanced quotes / dangling escape.
@@ -459,6 +491,10 @@ Catch `ArgumentParser` errors, render with `RipgrepArgs.fullMessage(for:)` (incl
 
 ## 7. LLM Tool Integration
 
+The `toolSchema` literal below targets the **Anthropic Messages API tool schema** (top-level `name` / `description` / `input_schema`). Adapters for OpenAI's `function`/`parameters` shape, Google Gemini's `functionDeclarations`, etc., should be derived in consumer code from the same underlying `ToolInput` (Codable). v1 ships only the Anthropic form.
+
+`formattedAsJSONLines()` emits **one JSON object per match, no envelope** — no `begin` / `end` / `summary` records (unlike rg's full `--json` schema). LLMs parse line-by-line trivially; envelope records add token cost without adding signal here.
+
 ```swift
 extension Ripgrep {
     public struct ToolInput: Codable, Sendable {
@@ -466,10 +502,11 @@ extension Ripgrep {
         public init(args: String) { self.args = args }
     }
 
+    /// Anthropic Messages API tool schema.
     public static let toolSchema: String = #"""
     {
       "name": "ripgrep",
-      "description": "Search files using ripgrep (subset). Provide arguments as you would on the rg CLI; behavior matches rg defaults (case-sensitive, respects .gitignore). Examples:\n  \"TODO src/\"\n  \"-S 'func\\s+\\w+' src/ -t swift -A 2\"\n  \"-i error logs/ -g '*.log' -m 50\"\nUnsupported flags: --pre, -z, --type-add, --hyperlink-format, --sort modified, --vimgrep, --binary. Use --json to get JSON-lines output.",
+      "description": "Search files using ripgrep (subset). Provide arguments as you would on the rg CLI; behavior matches rg defaults (case-sensitive, respects .gitignore). Examples:\n  \"TODO src/\"\n  \"-S 'func\\s+\\w+' src/ -t swift -A 2\"\n  \"-i error logs/ -g '*.log' -m 50\"\nUnsupported flags: --pre, -z, --type-add, --hyperlink-format, --sort modified, --vimgrep, --binary. Use --json to get JSON-lines output (one match per line, no begin/end envelope).",
       "input_schema": {
         "type": "object",
         "required": ["args"],
@@ -558,6 +595,7 @@ Consumers then resolve via SwiftPM with no Rust toolchain required.
 | Panic safety | XCTest | Inject test-only Rust panic, assert `.internalPanic(_)` is thrown, no crash |
 | Tool roundtrip | XCTest | JSON-encoded `ToolInput` → `handleToolCall` → assert text/JSON shape |
 | Error path | XCTest | Bad regex, missing path, malformed args, unsupported flag → message contains usage hint |
+| Fuzz | `cargo-fuzz` | Regex compilation, glob compilation, FFI boundary (random `SearchRequest` fields) — no panics, no UB, no unbounded memory |
 
 Fixture repo (≈10 files): `.gitignore`, mix of `.swift`/`.rs`/`.ts`/`.txt`, one hidden file `.env`, one ignored file `target/foo.txt`, one large file (>1MB) for max-filesize tests, one symlink loop for walker robustness.
 
@@ -566,7 +604,15 @@ Fixture repo (≈10 files): `.gitignore`, mix of `.swift`/`.rs`/`.ts`/`.txt`, on
 - Exact crate version pinning (track ripgrep 15.1.0's `Cargo.lock`).
 - Whether `CancelToken` lives in Rust as `uniffi::Object` or is reconstructed from a raw pointer per call (UniFFI ergonomics dependent).
 - Symlink loop handling (`ignore` has detection; just confirm + test).
-- Whether `SearchResult.formattedAsJSONLines()` mirrors rg `--json`'s `begin`/`end`/`summary` envelope or just emits per-match objects.
+- Exact `before_context_break` rule for `formattedAsText()` (when to emit `--` between adjacent matches in the same file). Mirror rg's behavior; test against fixtures.
+
+## 10a. Swift Language Requirement
+
+`Package.swift` declares `swiftLanguageVersions: [.v6]`. Required for:
+- Typed throws (`throws(Ripgrep.Error)`) used by the tokenizer / parser
+- Strict `Sendable` checking on `Options` / `SearchResult`
+
+This raises the toolchain floor to Xcode 16 / Swift 6.0+. Consumers on older toolchains can still use `RipgrepKitFFI` directly but lose the typed-throws / Sendable guarantees from the higher layers.
 
 ## 11. Risk Notes
 
