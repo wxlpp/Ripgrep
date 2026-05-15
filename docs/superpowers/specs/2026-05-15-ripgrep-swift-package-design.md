@@ -1,26 +1,38 @@
 # Ripgrep Swift Package — Design Spec
 
 **Date:** 2026-05-15
-**Status:** Approved for planning
+**Status:** Approved for planning (revised after Codex adversarial review)
 **Owner:** Evan
 
 ## 1. Goal
 
-A Swift Package (SwiftPM) named `RipgrepKit` that wraps ripgrep 15.x and exposes a single search entry point usable from any iOS or macOS app. The primary consumer is an LLM tool-call: the model emits a `rg`-style argument string, the Swift host parses it, runs the search in-process, and returns formatted results.
+A Swift Package (SwiftPM) named `RipgrepKit` that wraps a curated **subset** of ripgrep 15.x's functionality and exposes a search entry point usable from any iOS or macOS app. The primary consumer is an LLM tool-call: the model emits a `rg`-style argument string, the Swift host parses it, runs the search in-process, and returns formatted results.
 
-## 2. Non-Goals
+## 2. Non-Goals (v1 unsupported / explicit subset)
 
-- **No CLI binary**: This is a library, not an executable. (Bundling the `rg` binary + `Process` is impossible on iOS.)
-- **No reimplementation of ripgrep**: We compose ripgrep's official sub-crates (`ignore`, `grep-*`, `globset`); we do not fork or rewrite its core.
-- **No PCRE2** in v1: omits the heavy PCRE2 system dependency. Default Rust regex covers the LLM tool-call use cases.
-- **No Linux/Windows support** in v1: scope is iOS + macOS via XCFramework.
-- **No cancellation/timeout API** in v1: bounded by `--max-count`. Forwarding Swift `Task.cancel()` to a Rust atomic flag is deferred to v2.
+This is **rg-inspired**, not full rg parity. Unsupported in v1:
+
+- **No CLI executable** (library only; iOS sandbox forbids subprocess).
+- **No PCRE2** (avoids the PCRE2 system dependency; default Rust regex is sufficient).
+- **No Linux/Windows** (iOS + macOS only via XCFramework).
+- **No preprocessor** (`--pre`, `--pre-glob`).
+- **No compressed file search** (`-z`, `--search-zip`).
+- **No stdin input** (search operates on file paths).
+- **No custom encoding / BOM sniffing** (UTF-8 lossy only; non-UTF-8 bytes become U+FFFD).
+- **No `--type-add` / `--type-clear`** (only ripgrep's built-in default type definitions).
+- **No mtime sort** (`--sort modified`, `--sortr`); results are sorted deterministically by `(path, line_number)`.
+- **No terminal hyperlinks** (`--hyperlink-format`).
+- **No special binary modes** (`--binary`, `-a`); binary files are skipped per `ignore`'s default detection.
+- **No `--null-data`, `--passthru`, `--vimgrep`** output modes; only plain text and JSON-lines.
+
+Unsupported flags surface as `Ripgrep.Error.invalidArguments(message:)` with a descriptive message, so the LLM can self-correct.
 
 ## 3. Constraints
 
-- Must run on **iOS device, iOS simulator, and macOS** → forces in-process linkage, no subprocess.
-- Source of truth for search behavior is **ripgrep's own crates** (so semantics match what users expect from `rg`).
-- Tool-call schema must be **single-string** (`{ "args": "..." }`) so LLM can rely on its `rg` CLI knowledge.
+- Must run on **iOS device, iOS simulator, and macOS** → in-process linkage, no subprocess.
+- Search semantics derived from ripgrep's official sub-crates (`ignore`, `grep-*`, `globset`) so behavior matches user expectations within the supported subset.
+- Tool-call schema is **single-string** (`{ "args": "..." }`) so LLM can rely on its `rg` CLI knowledge.
+- **Cancellation is v1**: long-running searches must respect Swift `Task.cancel()` so they don't block agent loops.
 
 ## 4. Architecture
 
@@ -31,22 +43,28 @@ A Swift Package (SwiftPM) named `RipgrepKit` that wraps ripgrep 15.x and exposes
 └────────────────────┬────────────────────────────────────┘
                      │
         ┌────────────▼─────────────┐
-        │ RipgrepKit (Swift)       │  swift-argument-parser
-        │ - tokenizer              │  + typed Options
-        │ - RipgrepArgs (Parsable) │  + LLM tool helpers
-        │ - SearchResult formatter │
+        │ RipgrepKitTool (Swift)   │  swift-argument-parser
+        │ - tokenizer              │  + LLM tool helpers
+        │ - RipgrepArgs (Parsable) │  + output formatters
+        │ - parse / format         │
+        └────────────┬─────────────┘
+                     │ uses typed API
+        ┌────────────▼─────────────┐
+        │ RipgrepKitCore (Swift)   │  Public typed API
+        │ - Ripgrep.search(...)    │  - Options / Match / Result
+        │ - Codable + Sendable     │  - error mapping
         └────────────┬─────────────┘
                      │ Codable structs over UniFFI
         ┌────────────▼─────────────┐
-        │ RipgrepKitFFI (Swift)    │  Auto-generated
-        │ uniffi-bindgen output    │  by uniffi-bindgen swift
+        │ RipgrepKitFFI (Swift)    │  uniffi-bindgen output
         └────────────┬─────────────┘
-                     │ FFI (C ABI)
+                     │ FFI (C ABI), sync entry + cancel token
         ┌────────────▼─────────────┐
         │ RipgrepCore.xcframework  │  Static lib (Rust)
         │   ios-arm64              │  ignore + grep-regex
         │   ios-arm64_x86_64-sim   │  + grep-searcher + globset
-        │   macos-arm64_x86_64     │
+        │   macos-arm64_x86_64     │  + AtomicBool cancel +
+        │                          │    catch_unwind at FFI edge
         └──────────────────────────┘
 ```
 
@@ -57,35 +75,43 @@ Ripgrep/
 ├── Package.swift                       # SwiftPM manifest
 ├── Cargo.toml                          # Rust workspace root
 ├── crates/
-│   └── ripgrep_core/                   # The Rust crate
+│   └── ripgrep_core/
 │       ├── Cargo.toml
 │       └── src/
-│           ├── lib.rs                  # UniFFI exports
-│           ├── search.rs               # WalkParallel + grep-searcher composition
-│           ├── options.rs              # Request / Match / Result types
-│           └── error.rs                # RipgrepError enum
+│           ├── lib.rs                  # UniFFI exports + catch_unwind
+│           ├── search.rs               # WalkParallel + grep-searcher
+│           ├── cancel.rs               # CancelToken (AtomicBool wrapper)
+│           ├── options.rs              # Request / Match / Result
+│           └── error.rs                # RipgrepError
 ├── Sources/
-│   ├── RipgrepKitFFI/
-│   │   └── ripgrep_core.swift          # uniffi-bindgen output (committed)
-│   └── RipgrepKit/
-│       ├── Ripgrep.swift               # Public API namespace
-│       ├── RipgrepArgs.swift           # ParsableCommand definition
+│   ├── RipgrepKitFFI/                  # uniffi-bindgen output (committed)
+│   │   └── ripgrep_core.swift
+│   ├── RipgrepKitCore/                 # Typed API only — NO argument-parser dep
+│   │   ├── Ripgrep.swift               # namespace + search(...)
+│   │   ├── Options.swift
+│   │   ├── SearchResult.swift          # types + formatters
+│   │   └── Error.swift
+│   └── RipgrepKitTool/                 # CLI parsing + LLM tool helpers
+│       ├── RipgrepArgs.swift           # ParsableCommand
 │       ├── Tokenizer.swift             # Shell-style argv splitter
-│       ├── Options.swift               # Public Options struct
-│       ├── SearchResult.swift          # Public result types + formatters
+│       ├── Parse.swift                 # parse(_:) -> ParsedInvocation
+│       ├── Run.swift                   # run(_:) convenience over parse+search+format
 │       └── Tool.swift                  # toolSchema, ToolInput, handleToolCall
-├── Frameworks/
-│   └── RipgrepCore.xcframework         # Committed binary artifact
 ├── scripts/
-│   ├── build-xcframework.sh            # Builds 5 Rust slices, lipos, packages
+│   ├── build-xcframework.sh            # Builds 5 Rust targets, lipos, packages
 │   ├── generate-bindings.sh            # Runs uniffi-bindgen swift
-│   └── ci.sh                           # Local equivalent of CI workflow
+│   ├── package-release.sh              # Zips xcframework + computes SHA256
+│   └── ci.sh
 ├── Tests/
-│   └── RipgrepKitTests/
-│       ├── Fixtures/                   # Mini repo with .gitignore, hidden, etc.
+│   ├── RipgrepKitCoreTests/
+│   │   ├── Fixtures/
+│   │   ├── SearchTests.swift
+│   │   ├── CancellationTests.swift
+│   │   └── ErrorTests.swift
+│   └── RipgrepKitToolTests/
 │       ├── TokenizerTests.swift
 │       ├── ArgsParsingTests.swift
-│       ├── SearchTests.swift
+│       ├── ParseTests.swift
 │       └── ToolCallTests.swift
 ├── fixture/                            # Sample data for end-to-end tests
 └── docs/superpowers/specs/             # This document
@@ -93,22 +119,50 @@ Ripgrep/
 
 ### 4.2 Package.swift Targets
 
-- `.binaryTarget(name: "RipgrepCore", path: "Frameworks/RipgrepCore.xcframework")`
-- `.target(name: "RipgrepKitFFI", dependencies: ["RipgrepCore"])`
-- `.target(name: "RipgrepKit", dependencies: ["RipgrepKitFFI", .product(name: "ArgumentParser", package: "swift-argument-parser")])`
-- `.testTarget(name: "RipgrepKitTests", dependencies: ["RipgrepKit"], resources: [.copy("Fixtures")])`
+```swift
+let package = Package(
+    name: "RipgrepKit",
+    platforms: [.iOS(.v15), .macOS(.v12)],
+    products: [
+        .library(name: "RipgrepKitCore", targets: ["RipgrepKitCore"]),
+        .library(name: "RipgrepKitTool", targets: ["RipgrepKitTool"]),
+    ],
+    dependencies: [
+        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
+    ],
+    targets: [
+        .binaryTarget(
+            name: "RipgrepCore",
+            url: "https://github.com/<owner>/Ripgrep/releases/download/<tag>/RipgrepCore.xcframework.zip",
+            checksum: "<sha256>"
+        ),
+        .target(name: "RipgrepKitFFI", dependencies: ["RipgrepCore"]),
+        .target(name: "RipgrepKitCore", dependencies: ["RipgrepKitFFI"]),
+        .target(name: "RipgrepKitTool", dependencies: [
+            "RipgrepKitCore",
+            .product(name: "ArgumentParser", package: "swift-argument-parser"),
+        ]),
+        .testTarget(name: "RipgrepKitCoreTests",
+                    dependencies: ["RipgrepKitCore"],
+                    resources: [.copy("Fixtures")]),
+        .testTarget(name: "RipgrepKitToolTests",
+                    dependencies: ["RipgrepKitTool"],
+                    resources: [.copy("Fixtures")]),
+    ]
+)
+```
 
-Dependency: `apple/swift-argument-parser` from 1.5.0.
+Consumers of just the typed API depend on `RipgrepKitCore` and pay no `argument-parser` cost. Consumers wiring up an LLM tool depend on `RipgrepKitTool`.
 
 ### 4.3 XCFramework Slices
 
-| Slice | Rust target |
-|---|---|
-| `ios-arm64` | `aarch64-apple-ios` |
-| `ios-arm64_x86_64-simulator` | `aarch64-apple-ios-sim` + `x86_64-apple-ios` (lipo) |
-| `macos-arm64_x86_64` | `aarch64-apple-darwin` + `x86_64-apple-darwin` (lipo) |
+| XCFramework slice | Rust target(s) | Notes |
+|---|---|---|
+| `ios-arm64` | `aarch64-apple-ios` | Device |
+| `ios-arm64_x86_64-simulator` | `aarch64-apple-ios-sim` + `x86_64-apple-ios` | lipo'd fat |
+| `macos-arm64_x86_64` | `aarch64-apple-darwin` + `x86_64-apple-darwin` | lipo'd fat |
 
-The xcframework is **committed to the repo** in v1 so consumers don't need a Rust toolchain. Future v2 may switch to remote `.xcframework.zip` via GitHub Releases.
+**3 XCFramework slices, 5 Rust targets total.** Distributed via GitHub Release as `RipgrepCore.xcframework.zip` with SHA256 checksum committed in `Package.swift`.
 
 ## 5. Rust Core (`ripgrep_core`)
 
@@ -116,10 +170,10 @@ The xcframework is **committed to the repo** in v1 so consumers don't need a Rus
 
 ```toml
 [dependencies]
-ignore = "0.4"          # Walker + .gitignore + hidden + globset overrides
-grep-regex = "0.1"      # Default regex matcher
-grep-searcher = "0.1"   # Search loop + context lines + multiline
-globset = "0.4"         # Include/exclude glob compilation
+ignore = "0.4"
+grep-regex = "0.1"
+grep-searcher = "0.1"
+globset = "0.4"
 uniffi = "0.28"
 thiserror = "2"
 ```
@@ -143,8 +197,10 @@ pub struct SearchRequest {
     pub include_hidden: bool,
     pub before_context: u32,
     pub after_context: u32,
-    pub max_matches: Option<u32>,
+    pub max_matches: Option<u32>,        // global cap on matches across all files
+    pub max_files: Option<u32>,          // hard cap on files visited (cancellation safety net)
     pub max_file_size_bytes: Option<u64>,
+    pub timeout_ms: Option<u64>,         // wall-clock cap; deadline-based cancel
 }
 
 #[derive(uniffi::Record)]
@@ -154,7 +210,7 @@ pub struct Submatch { pub start: u32, pub end: u32 }
 pub struct SearchMatch {
     pub path: String,
     pub line_number: u64,
-    pub line: String,                 // UTF-8 lossy
+    pub line: String,
     pub before_context: Vec<String>,
     pub after_context: Vec<String>,
     pub submatches: Vec<Submatch>,
@@ -163,9 +219,24 @@ pub struct SearchMatch {
 #[derive(uniffi::Record)]
 pub struct SearchResult {
     pub matches: Vec<SearchMatch>,
-    pub truncated: bool,
+    pub truncated: bool,                 // hit max_matches or max_files
+    pub cancelled: bool,                 // hit timeout or external cancel
     pub files_searched: u64,
     pub elapsed_ms: u64,
+}
+
+#[derive(uniffi::Object)]
+pub struct CancelToken {
+    flag: Arc<AtomicBool>,
+    deadline: Mutex<Option<Instant>>,
+}
+
+#[uniffi::export]
+impl CancelToken {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> { /* ... */ }
+    pub fn cancel(&self) { /* set flag */ }
+    pub fn is_cancelled(&self) -> bool { /* check flag or deadline */ }
 }
 
 #[derive(uniffi::Error, thiserror::Error, Debug)]
@@ -173,103 +244,178 @@ pub enum RipgrepError {
     #[error("invalid regex: {0}")] InvalidPattern(String),
     #[error("path not found: {0}")] PathNotFound(String),
     #[error("io error: {0}")]       Io(String),
+    #[error("internal panic: {0}")] InternalPanic(String),
 }
 
-#[uniffi::export(async_runtime = "tokio")]
-pub async fn search(request: SearchRequest) -> Result<SearchResult, RipgrepError>;
+/// Synchronous entry point. Long-running, must be called off the main thread
+/// (Swift wraps in Task.detached). Honors cancel token.
+#[uniffi::export]
+pub fn search_blocking(
+    request: SearchRequest,
+    cancel: Option<Arc<CancelToken>>,
+) -> Result<SearchResult, RipgrepError>;
 ```
+
+**Why sync (not `async fn`):** UniFFI's async support runs the future on its tokio runtime; a CPU/IO-blocking search would starve runtime workers. Exposing a sync function lets Swift control the threading via `Task.detached { ... }` (or a custom executor). Cancellation flows through the explicit `CancelToken` — Swift's `withTaskCancellationHandler` sets the flag.
 
 ### 5.3 Search Pipeline
 
 ```
-search(req)
-  ① Build RegexMatcher with case_smart / multi_line flags
-  ② Build ignore::WalkBuilder
-       - hidden(!req.include_hidden)
-       - git_ignore(req.respect_gitignore)
-       - git_global(req.respect_gitignore)
-       - git_exclude(req.respect_gitignore)
-       - types(TypesBuilder for req.file_types)
-       - max_filesize(req.max_file_size_bytes)
-       - overrides(OverrideBuilder for include/exclude globs)
-  ③ WalkParallel with shared:
-       - AtomicUsize match counter
-       - AtomicBool stop flag (set when counter ≥ max_matches)
+search_blocking(req, cancel)
+  ① catch_unwind { ... } — translate any panic to RipgrepError::InternalPanic
+  ② Build RegexMatcher (case_smart / multi_line)
+  ③ Build ignore::WalkBuilder:
+       hidden(!include_hidden), git_ignore(respect_gitignore),
+       git_global(respect_gitignore), git_exclude(respect_gitignore),
+       types(TypesBuilder for file_types),
+       max_filesize(max_file_size_bytes),
+       overrides(OverrideBuilder for include/exclude globs)
+  ④ Set deadline = Instant::now() + timeout_ms (if any) on cancel token
+  ⑤ WalkParallel.run with shared:
+       - AtomicUsize match counter, AtomicUsize file counter
+       - cancel token (checked at every dir entry → WalkState::Quit if cancelled)
        - Mutex<Vec<SearchMatch>> sink
-  ④ Per file: SearcherBuilder with before/after_context, multi_line, runs custom Sink
-       - Sink::matched: capture line, lineno, submatch byte ranges
-       - Sink::context:  capture context line
-  ⑤ Sort results by (path, line_number); truncate at max_matches
-  ⑥ Return SearchResult (matches, truncated, files_searched, elapsed_ms)
+  ⑥ Per file: SearcherBuilder(before/after_context, multi_line) + custom Sink
+       Sink checks cancel.is_cancelled() between events → returns Err to abort file
+  ⑦ Sort results by (path, line_number); truncate at max_matches
+  ⑧ Return SearchResult { matches, truncated, cancelled, ... }
 ```
 
-**Text encoding:** All paths and lines are converted from raw bytes via UTF-8 lossy (matches ripgrep's default behavior).
+**Threading:** `WalkParallel` uses `std::thread`, separate from any Swift/tokio runtime. No nested-runtime concern. The whole `search_blocking` call is meant to run on a dedicated Swift thread (`Task.detached`).
 
-## 6. Swift API (`RipgrepKit`)
+**Panic safety:** Top-level `catch_unwind` at the FFI boundary; worker-thread panics surface through `WalkParallel`'s join, which we capture and convert to `InternalPanic`. No unwinding crosses the C ABI.
 
-### 6.1 Public Surface
+**Text encoding:** All bytes → UTF-8 lossy.
+
+## 6. Swift API
+
+### 6.1 `RipgrepKitCore` — Typed API
 
 ```swift
 public enum Ripgrep {
-    // CLI-string entry point — primary LLM tool path
-    public static func run(_ argString: String) async throws -> SearchResult
+    public struct Options: Codable, Sendable {
+        public var caseInsensitive: Bool = false
+        public var smartCase: Bool = false       // matches rg CLI default
+        public var multiline: Bool = false
+        public var include: [String] = []
+        public var exclude: [String] = []
+        public var fileTypes: [String] = []
+        public var respectGitignore: Bool = true
+        public var includeHidden: Bool = false
+        public var beforeContext: Int = 0
+        public var afterContext: Int = 0
+        public var maxMatches: Int? = nil
+        public var maxFiles: Int? = nil
+        public var maxFileSizeBytes: Int? = nil
+        public var timeout: Duration? = nil
+        public init(...) { ... }
+    }
 
-    // Pre-tokenized argv entry point — programmatic / avoids quoting issues
-    public static func run(_ args: [String]) async throws -> SearchResult
+    public struct Match: Codable, Sendable {
+        public let path: String
+        public let lineNumber: Int
+        public let line: String
+        public let beforeContext: [String]
+        public let afterContext: [String]
+        public let submatches: [Submatch]
+    }
 
-    // Typed entry point — for callers that don't want CLI parsing at all
+    public struct Submatch: Codable, Sendable {
+        public let start: Int
+        public let end: Int
+    }
+
+    public struct SearchResult: Codable, Sendable {
+        public let matches: [Match]
+        public let truncated: Bool
+        public let cancelled: Bool
+        public let filesSearched: Int
+        public let elapsedMs: Int
+
+        public func formattedAsText() -> String        // path:line:text
+        public func formattedAsJSONLines() -> String   // rg --json style
+    }
+
+    public enum Error: Swift.Error, Sendable {
+        case invalidArguments(message: String)         // from RipgrepKitTool
+        case invalidPattern(String)
+        case pathNotFound(String)
+        case io(String)
+        case internalPanic(String)
+
+        public var message: String { /* human-readable */ }
+    }
+
+    /// Runs the search on a detached task. Honors `Task.cancel()` via a
+    /// CancelToken bridged from withTaskCancellationHandler.
     public static func search(
         pattern: String,
         in paths: [String],
         options: Options = .init()
     ) async throws -> SearchResult
+}
+```
 
-    public struct Options: Codable, Sendable { /* mirrors RipgrepArgs */ }
-    public struct Match: Codable, Sendable    { /* mirrors SearchMatch */ }
-    public struct Submatch: Codable, Sendable { let start: Int; let end: Int }
-    public struct SearchResult: Codable, Sendable {
-        public let matches: [Match]
-        public let truncated: Bool
-        public let filesSearched: Int
-        public let elapsedMs: Int
-        public func formattedAsText() -> String       // rg-default style
-        public func formattedAsJSONLines() -> String  // rg --json style
-    }
-
-    public enum Error: Swift.Error, Sendable {
-        case invalidArguments(message: String)  // wraps ArgumentParser errors
-        case invalidPattern(String)
-        case pathNotFound(String)
-        case io(String)
-
-        public var message: String { /* human-readable, for LLM retries */ }
+**Cancellation wiring** (sketch):
+```swift
+public static func search(...) async throws -> SearchResult {
+    let token = CancelToken()
+    return try await withTaskCancellationHandler {
+        try await Task.detached(priority: .userInitiated) {
+            try Ripgrep.searchBlocking(request: request.toFFI(), cancel: token)
+        }.value
+    } onCancel: {
+        token.cancel()
     }
 }
 ```
 
-### 6.2 RipgrepArgs (`ParsableCommand`)
+### 6.2 `RipgrepKitTool` — CLI parsing + LLM helpers
 
-Flag names match the real `rg` CLI 1:1 so LLM training-data knowledge transfers directly.
+```swift
+import RipgrepKitCore
+import ArgumentParser
+
+extension Ripgrep {
+    public enum OutputFormat: String, Codable, Sendable { case text, jsonLines }
+
+    public struct ParsedInvocation: Sendable {
+        public let pattern: String
+        public let paths: [String]
+        public let options: Options
+        public let outputFormat: OutputFormat
+    }
+
+    /// Tokenizes and parses an rg-style argument string (or pre-tokenized argv)
+    /// into a typed invocation. Throws .invalidArguments on parse failure.
+    public static func parse(_ argString: String) throws -> ParsedInvocation
+    public static func parse(_ args: [String]) throws -> ParsedInvocation
+
+    /// Convenience: parse + search + format-as-string in one call.
+    public static func run(_ argString: String) async throws -> String
+    public static func run(_ args: [String]) async throws -> String
+}
+```
+
+**`RipgrepArgs`** (`ParsableCommand`, flag names match `rg` 1:1):
 
 ```swift
 struct RipgrepArgs: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "rg",
-        abstract: "Search files using ripgrep semantics."
+        abstract: "Search files using ripgrep semantics (subset)."
     )
 
     @Argument var pattern: String
-    @Argument var paths: [String] = []     // empty → ["."]
+    @Argument var paths: [String] = []                                    // empty → ["."]
 
-    @Flag(name: [.short, .customLong("ignore-case")])     var ignoreCase = false
-    @Flag(name: .customLong("smart-case"), inversion: .prefixedNo)
-        var smartCase = true   // ← default ON for LLM ergonomics
+    @Flag(name: [.short, .customLong("ignore-case")])    var ignoreCase = false
+    @Flag(name: [.customShort("S"), .customLong("smart-case")])
+        var smartCase = false                                             // matches rg default
     @Flag(name: [.customShort("U"), .customLong("multiline")]) var multiline = false
 
-    @Option(name: [.customShort("g"), .customLong("glob")])
-        var glob: [String] = []     // include; "!pat" excludes
-    @Option(name: [.customShort("t"), .customLong("type")])
-        var fileTypes: [String] = []
+    @Option(name: [.customShort("g"), .customLong("glob")])    var glob: [String] = []
+    @Option(name: [.customShort("t"), .customLong("type")])    var fileTypes: [String] = []
 
     @Flag(name: .customLong("hidden"))     var hidden = false
     @Flag(name: .customLong("no-ignore"))  var noIgnore = false
@@ -279,36 +425,37 @@ struct RipgrepArgs: ParsableCommand {
     @Option(name: [.customShort("C"), .customLong("context")])        var context = 0
 
     @Option(name: [.customShort("m"), .customLong("max-count")])      var maxCount: Int?
+    @Option(name: .customLong("max-files"))                           var maxFiles: Int?
     @Option(name: .customLong("max-filesize"))                        var maxFilesize: String?
+    @Option(name: .customLong("timeout-ms"))                          var timeoutMs: Int?
 
-    @Flag(name: .customLong("json"))       var json = false   // selects output format
+    @Flag(name: .customLong("json"))       var json = false              // selects output format
 
-    func run() throws { /* unused; consumed by RipgrepKit */ }
-    func toFFIRequest() -> SearchRequest { /* maps to UniFFI types */ }
+    func run() throws { /* unused */ }
 }
 ```
 
-**Notable defaults & FFI mapping (`toFFIRequest`):**
-- `smart-case` is **on** by default (LLM-friendly; differs from `rg` CLI). `--no-smart-case` disables it via `inversion: .prefixedNo`.
-- `respect_gitignore` ← `!noIgnore`.
-- `context` (-C) sets both before/after when non-zero, unless either was set explicitly (mirror rg behavior).
-- Empty `paths` → `["."]`.
-- `glob` array splits by prefix: entries starting with `!` go into `exclude_globs` (with `!` stripped); the rest go into `include_globs`.
-- `Options` (§6.1) mirrors `RipgrepArgs` field-for-field including the same defaults (notably `smartCase: true`, `respectGitignore: true`).
+**Notable mappings (`toParsed`):**
+- `respectGitignore` ← `!noIgnore`
+- `context` (-C) sets both before/after only when they weren't set explicitly
+- Empty `paths` → `["."]`
+- `glob` array splits by `!` prefix into `include` vs `exclude`
+- `--json` → `outputFormat = .jsonLines`, otherwise `.text`
+- Default invocation in `Options` mirrors `RipgrepArgs` defaults exactly (notably `smartCase: false`, `respectGitignore: true`)
 
 ### 6.3 Tokenizer
 
 `func tokenize(_ s: String) throws -> [String]` — minimal shell-style splitter:
 - Splits on unquoted whitespace
-- Honors single quotes (literal) and double quotes (with `\` escapes)
-- Honors backslash escapes outside quotes
+- Honors single quotes (literal), double quotes (with `\` escapes), backslash escapes outside quotes
+- Supports `--flag=value` syntax (passed through to argument-parser)
 - **No** variable expansion, command substitution, or glob expansion
 
-~30 LoC. Throws `Ripgrep.Error.invalidArguments` on unbalanced quotes.
+Throws `Ripgrep.Error.invalidArguments` on unbalanced quotes / dangling escape.
 
 ### 6.4 Argument Parser Error Mapping
 
-When `RipgrepArgs.parse(...)` throws, catch and convert via `RipgrepArgs.fullMessage(for:)` so the message includes usage hints. Wrap into `.invalidArguments(message:)`. The message string is what gets surfaced to the LLM as `ERROR: ...`, enabling self-correction.
+Catch `ArgumentParser` errors, render with `RipgrepArgs.fullMessage(for:)` (includes usage hint), wrap into `.invalidArguments(message:)`. The message string is what reaches the LLM as `ERROR: ...`, enabling self-correction.
 
 ## 7. LLM Tool Integration
 
@@ -322,15 +469,12 @@ extension Ripgrep {
     public static let toolSchema: String = #"""
     {
       "name": "ripgrep",
-      "description": "Search files using ripgrep. Provide arguments exactly as you would on the rg CLI. Respects .gitignore by default. Examples:\n  \"TODO src/\"\n  \"'func\\s+\\w+' src/ -t swift -A 2\"\n  \"-i error logs/ -g '*.log' -m 50\"\nUse --json to get JSON-lines output for machine parsing.",
+      "description": "Search files using ripgrep (subset). Provide arguments as you would on the rg CLI; behavior matches rg defaults (case-sensitive, respects .gitignore). Examples:\n  \"TODO src/\"\n  \"-S 'func\\s+\\w+' src/ -t swift -A 2\"\n  \"-i error logs/ -g '*.log' -m 50\"\nUnsupported flags: --pre, -z, --type-add, --hyperlink-format, --sort modified, --vimgrep, --binary. Use --json to get JSON-lines output.",
       "input_schema": {
         "type": "object",
         "required": ["args"],
         "properties": {
-          "args": {
-            "type": "string",
-            "description": "rg-style argument string"
-          }
+          "args": { "type": "string", "description": "rg-style argument string" }
         }
       }
     }
@@ -338,19 +482,24 @@ extension Ripgrep {
 
     public static func handleToolCall(_ input: ToolInput) async throws -> String {
         do {
-            let result = try await run(input.args)
-            return result.formattedAsText()  // or formattedAsJSONLines() if --json
+            let parsed = try parse(input.args)
+            let result = try await search(
+                pattern: parsed.pattern, in: parsed.paths, options: parsed.options
+            )
+            switch parsed.outputFormat {
+            case .text:      return result.formattedAsText()
+            case .jsonLines: return result.formattedAsJSONLines()
+            }
         } catch let e as Ripgrep.Error {
-            return "ERROR: \(e.message)"     // also returned as String, not thrown,
-                                              // so LLM sees the failure and retries
+            return "ERROR: \(e.message)"
         }
     }
 }
 ```
 
-**Output format selection:** `handleToolCall` checks whether `--json` was passed (by inspecting `RipgrepArgs.json` after parsing). Default is `formattedAsText()`. This requires `run(_:)` to expose the parsed `RipgrepArgs.json` value back to the caller — implementation will refactor `run` to return both `SearchResult` and the parsed args, or use a thread-local / context object. (Implementation plan will pick the cleanest path.)
+**Output format selection** is now driven by `parsed.outputFormat`, set by the `--json` flag at parse time. No tuple returns or thread-locals.
 
-**Typical consumer code (with any LLM SDK):**
+**Typical consumer code:**
 
 ```swift
 case .toolUse(let block) where block.name == "ripgrep":
@@ -359,62 +508,82 @@ case .toolUse(let block) where block.name == "ripgrep":
     sendToolResult(output)
 ```
 
-## 8. Build Process
+## 8. Build & Distribution
 
-### 8.1 First Build (developer)
+### 8.1 Developer Workflow (rebuild xcframework locally)
 
 ```bash
 rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios \
                   aarch64-apple-darwin x86_64-apple-darwin
-./scripts/build-xcframework.sh        # ~3-5 min on Apple Silicon
-./scripts/generate-bindings.sh        # writes Sources/RipgrepKitFFI/ripgrep_core.swift
-swift test
+./scripts/build-xcframework.sh           # ~3-5 min on Apple Silicon
+./scripts/generate-bindings.sh           # writes Sources/RipgrepKitFFI/ripgrep_core.swift
+./scripts/package-release.sh             # zips to RipgrepCore.xcframework.zip + sha256
+
+# Point Package.swift at a local file:// URL during dev:
+.binaryTarget(name: "RipgrepCore",
+              path: "Frameworks/RipgrepCore.xcframework")   // dev override
 ```
+
+A `Package.swift.dev` (or a `RIPGREP_LOCAL_BINARY=1` env-driven branch) lets contributors swap to a local `path:`-style binaryTarget without committing the URL form.
 
 ### 8.2 build-xcframework.sh
 
 For each Rust target:
 1. `cargo build --release --target <triple> -p ripgrep_core`
 2. lipo simulator/macOS slices into fat binaries
-3. Stage each into a temporary `.framework` dir with `Info.plist` + `module.modulemap`
-4. `xcodebuild -create-xcframework -framework ... -framework ... -output Frameworks/RipgrepCore.xcframework`
+3. Stage each into a `.framework` dir with `Info.plist` + `module.modulemap`
+4. `xcodebuild -create-xcframework -framework ... -output ./build/RipgrepCore.xcframework`
 
-### 8.3 generate-bindings.sh
+### 8.3 Release Workflow (CI)
 
-```bash
-cargo run --release --bin uniffi-bindgen --features cli -- \
-    generate --library target/release/libripgrep_core.dylib \
-    --language swift \
-    --out-dir Sources/RipgrepKitFFI/
-```
+`.github/workflows/release.yml` (macOS runner) on tag push:
+1. Build xcframework
+2. Run all tests against locally-built xcframework
+3. `package-release.sh` → `RipgrepCore.xcframework.zip` + `RipgrepCore.xcframework.zip.sha256`
+4. Publish GitHub Release with the zip + checksum file
+5. Bot opens a follow-up PR updating `Package.swift`'s `url:` and `checksum:` to the new release
 
-### 8.4 CI
-
-`.github/workflows/release.yml` (macOS runner): on tag push, builds the xcframework, runs `swift test`, uploads `RipgrepCore.xcframework.zip` to the GitHub Release. Repo build remains usable without CI (xcframework checked in).
+Consumers then resolve via SwiftPM with no Rust toolchain required.
 
 ## 9. Testing Strategy
 
 | Layer | Tool | What |
 |---|---|---|
-| Rust core | `cargo test` | Walker filtering, gitignore behavior, context lines, max_matches truncation, multiline, file types |
-| Tokenizer | XCTest | Quotes, escapes, whitespace, malformed input |
-| RipgrepArgs | XCTest | Each flag's short/long/inverted forms, conflicting flags, default propagation (smart-case on, paths→".") |
-| End-to-end (Swift) | XCTest | `Ripgrep.run("...")` against `Tests/RipgrepKitTests/Fixtures/` mini-repo with .gitignore + hidden + multi-language files |
-| Tool roundtrip | XCTest | JSON-encoded `ToolInput` → `handleToolCall` → assert output text/JSON shape |
-| Error path | XCTest | Bad regex, missing path, malformed args; assert error messages contain usage hints |
+| Rust core | `cargo test` | Walker filtering, gitignore, context lines, max_matches/max_files truncation, multiline, file types, **cancellation flag honored mid-walk**, **panic in worker → InternalPanic** |
+| Tokenizer | XCTest | Single/double quotes, mixed, backslash escapes, `--flag=value`, empty args, dangling escapes, Windows-ish paths, mixed whitespace |
+| RipgrepArgs | XCTest | Each flag's short/long forms, `--no-smart-case` inverse, conflict combos, defaults exactly mirror rg |
+| End-to-end (Core) | XCTest | `Ripgrep.search(...)` against fixture mini-repo |
+| End-to-end (Tool) | XCTest | `Ripgrep.run("...")`, `parse(...)`, `handleToolCall(...)` |
+| Cancellation | XCTest | `Task { try await search(...) }` then `task.cancel()` returns within ~50ms with `cancelled: true` |
+| Panic safety | XCTest | Inject test-only Rust panic, assert `.internalPanic(_)` is thrown, no crash |
+| Tool roundtrip | XCTest | JSON-encoded `ToolInput` → `handleToolCall` → assert text/JSON shape |
+| Error path | XCTest | Bad regex, missing path, malformed args, unsupported flag → message contains usage hint |
 
-Fixture repo (≈10 files): `.gitignore`, mix of `.swift`/`.rs`/`.ts`/`.txt`, one hidden file `.env`, one ignored file `target/foo.txt`, one large file (>1MB) for max-filesize tests.
+Fixture repo (≈10 files): `.gitignore`, mix of `.swift`/`.rs`/`.ts`/`.txt`, one hidden file `.env`, one ignored file `target/foo.txt`, one large file (>1MB) for max-filesize tests, one symlink loop for walker robustness.
 
 ## 10. Open Items Deferred to Implementation
 
 - Exact crate version pinning (track ripgrep 15.1.0's `Cargo.lock`).
-- How `handleToolCall` retrieves the `--json` flag from the parsed args (refactor `run` return type, vs. context object).
-- Whether to vend a stable type-id for the tool (some SDKs require it).
-- Whether to expose `formattedAsText` / `formattedAsJSONLines` as `RipgrepArgs.OutputFormat` enum.
+- Whether `CancelToken` lives in Rust as `uniffi::Object` or is reconstructed from a raw pointer per call (UniFFI ergonomics dependent).
+- Symlink loop handling (`ignore` has detection; just confirm + test).
+- Whether `SearchResult.formattedAsJSONLines()` mirrors rg `--json`'s `begin`/`end`/`summary` envelope or just emits per-match objects.
 
 ## 11. Risk Notes
 
-- **`grep-printer` not used**: We're rolling our own match collector to avoid `grep-printer`'s color/terminal coupling and to produce plain Swift structs. Lower risk than it sounds — the `Sink` trait is small and well-documented.
-- **UniFFI async + Rust threading**: `WalkParallel` spawns its own threads internally; UniFFI's tokio runtime wraps the entry point. Need to confirm there's no nested-runtime issue (likely fine since `WalkParallel` uses `std::thread`, not tokio). Verify in implementation step 1.
-- **XCFramework size**: Estimate ~5–10 MB per slice (Rust regex + ignore are not small). Acceptable for most apps; document in README.
-- **swift-argument-parser exit behavior**: `parse()` does not exit the process (only `main()` does). Safe to use as a parsing-only tool inside a library.
+- **UniFFI async vs blocking work:** Avoided by exposing sync `search_blocking` and letting Swift control thread placement via `Task.detached`. Cancellation goes through an explicit `CancelToken`, not Tokio's cooperative cancel.
+- **Panic safety across FFI:** Mitigated by top-level `catch_unwind` + capturing `WalkParallel` join errors. Worth a fuzz pass at implementation time.
+- **`grep-printer` not used:** We collect matches via a custom `Sink`, which is small (≈100 LoC) but the place where context-line edge cases will manifest. Cover thoroughly in tests.
+- **swift-argument-parser exit behavior:** `parse()` does not exit the process (only `main()` does). Safe inside a library.
+- **XCFramework size:** Estimate 5–10 MB per slice; ~25–35 MB zipped. Document in README.
+- **Test fixture symlinks:** Need OS-agnostic creation in tests (not all CI runners preserve them through git).
+
+## 12. Routes Considered and Rejected
+
+| Route | Why rejected |
+|---|---|
+| **Pure Swift** (NSRegularExpression / `Regex` + `FileManager` + hand-rolled gitignore) | Lower-fidelity than ripgrep on perf and `.gitignore` semantics; reinventing a moving target. Acceptable only if ripgrep parity isn't desired — which it is here. |
+| **macOS `Process` + bundled rg binary** | Doesn't work on iOS (sandbox forbids fork/exec). Would force a different code path per platform. |
+| **iOS XPC to a host service** | XPC across processes still needs a host process to run rg, which iOS apps can't spawn. Useful only if there's a separate macOS helper, which doesn't exist here. |
+| **WASM (wasmer/wasmtime in iOS)** | iOS forbids JIT; AOT-only WASM runtimes work but bring another large dependency, and ripgrep-as-WASM lacks a maintained build with WASI FS access. Higher risk, no real upside vs the static-lib path. |
+| **swift-bridge instead of UniFFI** | Smaller community, weaker async/error-type story, manual struct mapping. UniFFI's `#[derive(uniffi::Record)]` covers our needs cleanly. |
+| **Commit XCFramework into git history** | 25-50 MB per binary refresh inflates clones, pollutes PR diffs, and complicates merges. GitHub Release + `binaryTarget(url:checksum:)` keeps the source repo lean. |
