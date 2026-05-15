@@ -52,3 +52,42 @@ mod options_tests {
         assert_eq!(r.pattern, "todo");
     }
 }
+
+mod cancel;
+
+#[cfg(test)]
+mod cancel_tests {
+    use super::cancel::CancelToken;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use std::thread;
+
+    #[test]
+    fn fresh_token_not_cancelled() {
+        let t = CancelToken::new(None);
+        assert!(!t.is_cancelled());
+    }
+
+    #[test]
+    fn explicit_cancel_trips_token() {
+        let t = Arc::new(CancelToken::new(None));
+        let t2 = Arc::clone(&t);
+        thread::spawn(move || t2.cancel());
+        thread::sleep(Duration::from_millis(20));
+        assert!(t.is_cancelled());
+    }
+
+    #[test]
+    fn deadline_trips_token_after_elapse() {
+        let t = CancelToken::new(Some(10));
+        thread::sleep(Duration::from_millis(40));
+        assert!(t.is_cancelled());
+    }
+
+    #[test]
+    fn no_deadline_means_never_auto_cancel() {
+        let t = CancelToken::new(None);
+        thread::sleep(Duration::from_millis(20));
+        assert!(!t.is_cancelled());
+    }
+}
