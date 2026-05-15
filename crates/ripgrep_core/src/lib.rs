@@ -397,3 +397,47 @@ mod context_tests {
         assert!(res.matches.len() >= 1);
     }
 }
+
+#[cfg(test)]
+mod limits_tests {
+    use super::cancel::CancelToken;
+    use super::search::search_blocking;
+    use std::sync::Arc;
+
+    fn req(pattern: &str) -> super::options::SearchRequest {
+        let mut r = super::search_e2e_tests::req(pattern);
+        r.respect_gitignore = false;   // ensure we have lots of files to count
+        r.include_hidden = true;
+        r
+    }
+
+    #[test]
+    fn max_matches_truncates_and_flags() {
+        let mut r = req("TODO");
+        r.max_matches = Some(1);
+        let res = search_blocking(r, Arc::new(CancelToken::new(None))).unwrap();
+        assert_eq!(res.matches.len(), 1);
+        assert!(res.truncated);
+    }
+
+    #[test]
+    fn max_files_caps_files_searched() {
+        let mut r = req("TODO");
+        r.max_files = Some(1);
+        let res = search_blocking(r, Arc::new(CancelToken::new(None))).unwrap();
+        assert!(res.files_searched <= 1, "got {}", res.files_searched);
+    }
+
+    #[test]
+    fn timeout_marks_result_cancelled() {
+        let mut r = req("xxxxxxxxxxxxxxxxx_no_match");  // forces full scan
+        r.timeout_ms = Some(1);   // 1 ms — extremely tight
+        // Big enough fixture: just our mini, but we set timeout to 0 so it trips
+        // even on tiny dirs.
+        let res = search_blocking(
+            r,
+            Arc::new(CancelToken::new(Some(0))),  // pre-tripped
+        ).unwrap();
+        assert!(res.cancelled);
+    }
+}
