@@ -21,7 +21,7 @@ pub struct ChannelSink<M: Matcher> {
     match_counter: Arc<AtomicUsize>,
     matcher: M,
     before_buf: VecDeque<String>,
-    pending_after: Vec<(SearchMatch, u32)>, // (match, remaining_after_lines)
+    pending_after: Vec<SearchMatch>,
     events_since_check: usize,
     before_context: usize,
 }
@@ -58,7 +58,7 @@ impl<M: Matcher> ChannelSink<M> {
     }
 
     fn flush_pending(&mut self) {
-        for (m, _) in self.pending_after.drain(..) {
+        for m in self.pending_after.drain(..) {
             let _ = self.tx.send(m);
             self.match_counter.fetch_add(1, Ordering::Relaxed);
         }
@@ -126,7 +126,7 @@ impl<M: Matcher> Sink for ChannelSink<M> {
             submatches,
         };
         // Defer actual send until after-context is collected.
-        self.pending_after.push((sm, self.before_context as u32));
+        self.pending_after.push(sm);
         Ok(true)
     }
 
@@ -147,7 +147,7 @@ impl<M: Matcher> Sink for ChannelSink<M> {
                 }
             }
             SinkContextKind::After => {
-                if let Some((m, _)) = self.pending_after.last_mut() {
+                if let Some(m) = self.pending_after.last_mut() {
                     m.after_context.push(line);
                 }
             }
