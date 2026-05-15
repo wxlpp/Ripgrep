@@ -21,10 +21,41 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+pub fn panic_safe<F, R>(f: F) -> Result<R, RipgrepError>
+where
+    F: FnOnce() -> R + std::panic::UnwindSafe,
+{
+    match std::panic::catch_unwind(f) {
+        Ok(r) => Ok(r),
+        Err(payload) => {
+            let msg = if let Some(s) = payload.downcast_ref::<&'static str>() {
+                (*s).to_string()
+            } else if let Some(s) = payload.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic payload".to_string()
+            };
+            Err(RipgrepError::InternalPanic(msg))
+        }
+    }
+}
+
+#[cfg(test)]
+pub fn force_panic_for_test() -> Result<(), RipgrepError> {
+    panic_safe(|| panic!("intentional test panic"))
+}
+
 pub fn search_blocking(
     req: SearchRequest,
     cancel: Arc<CancelToken>,
-) -> Result<SearchResult, crate::error::RipgrepError> {
+) -> Result<SearchResult, RipgrepError> {
+    panic_safe(move || search_blocking_inner(req, cancel))?
+}
+
+fn search_blocking_inner(
+    req: SearchRequest,
+    cancel: Arc<CancelToken>,
+) -> Result<SearchResult, RipgrepError> {
     let start = Instant::now();
 
     let matcher = build_matcher(&req)?;
