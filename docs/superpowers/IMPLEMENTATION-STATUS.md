@@ -122,7 +122,12 @@ Running `bash scripts/generate-bindings.sh` produces, under `Sources/RipgrepKitF
 
 **DONE — Task 25 (SearchTests).** Commit `970467d`. Spec ✅ (anti-vacuity probe proved gitignore test genuine) + controller code-quality ✅. **Full Rust↔UniFFI↔Swift pipeline proven end-to-end.** `fixturePath()` uses `Bundle.module.url(forResource: "mini", withExtension: nil, subdirectory: "Fixtures")`. 14 swift tests.
 
-**NEXT: Task 26** (CancellationTests — last Phase 4 task). Use the same `fixturePath()` form. Cancellation surfaces as `SearchResult.cancelled == true`, NOT a thrown error (see Task 26 carry-forwards above). Tasks 36-38 deferred. Task 35 release-time-only.
+**DONE — Task 26 (CancellationTests). ✅ PHASE 4 COMPLETE.** Commit `029e39a`. Spec ✅ (anti-vacuity proof: genuine cancellation, no escape-hatch pass; no deadlock) + controller code-quality ✅. Cancellation/timeout wiring proven end-to-end. 16 swift tests, cargo 33.
+
+### Task 27 carry-forward (the @_exported landmine — act on it in Task 27)
+`Sources/RipgrepKitTool/Stub.swift` = `@_exported import RipgrepKitCore` (Task 19 placeholder, sole purpose: make the then-empty RipgrepKitTool target compile). Task 27 adds the FIRST real RipgrepKitTool file (`Tokenizer.swift`, which has its own `import RipgrepKitCore`). At that point **delete `Sources/RipgrepKitTool/Stub.swift`** — keeping `@_exported` silently re-exports all of RipgrepKitCore's API through the RipgrepKitTool product (breaks the product layering). Plan's later Tool files/tests already `import RipgrepKitCore` explicitly, so removal is safe. Bundle the deletion into Task 27's commit (RipgrepKitTool: stub → real).
+
+**NEXT: Task 27** (Tokenizer — Phase 5 RipgrepKitTool begins). Tasks 36-38 deferred. Task 35 release-time-only.
 
 ### ⚠️ Phase 3 critical watch-out (Task 18/19 — the integration linchpin)
 
