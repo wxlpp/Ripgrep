@@ -18,6 +18,11 @@ In a new session, from `/Users/evan/Repositories/Ripgrep`:
 
 ## Progress
 
+> **STATUS 2026-05-16: Tasks 14–34 ALL DONE (spec ✅ + code-quality ✅, two-stage reviewed). Task 35 deferred-by-design (release-time). Tasks 36–38 deferred. Full suite green: Rust 33 tests, Swift 48 tests, clippy/fmt clean, 0 Swift-6 warnings. 15 plan deviations + Errata #7/#13 recorded below.** Next: final whole-implementation review → finishing-a-development-branch.
+
+### Task 35 — DEFERRED BY DESIGN (release-time only)
+`Task 35` (switch `Package.swift` from local `binaryTarget(path: "Frameworks/RipgrepCore.xcframework")` to remote `binaryTarget(url:checksum:)`) CANNOT be done now: it requires a published GitHub Release with a known sha256, and no release/tag exists (publishing is out of implementation scope). The local `binaryTarget(path:)` (Task 18) is correct and intentional for v0.1.0 dev. **Runbook when v0.1.0 is cut:** (1) push a `v0.1.0` tag → `.github/workflows/release.yml` runs on `macos-14` (clean cargo state ⇒ Deviation #10 min-OS stamping correct), builds the xcframework, runs tests, `package-release.sh` produces `dist/RipgrepCore.xcframework.zip` + `.sha256`, and `softprops/action-gh-release@v2` publishes them. (2) Replace the `.binaryTarget(name:"RipgrepCore", path:"Frameworks/RipgrepCore.xcframework")` in `Package.swift` with `.binaryTarget(name:"RipgrepCore", url:"https://github.com/<owner>/Ripgrep/releases/download/v0.1.0/RipgrepCore.xcframework.zip", checksum:"<contents of dist/RipgrepCore.xcframework.zip.sha256>")`. (3) `swift package reset && swift package resolve && swift build && swift test` → green. (4) commit `Package.swift` + `Package.resolved`. NOTE: `binaryTarget(name:"RipgrepCore", ...)` stays — only the framework's internal clang module is `RipgrepCoreFFI` (Deviation #9); do not rename.
+
 **DONE — Phase 1 (Rust core), Tasks 1-13.** 32 Rust tests passing. `cargo test -p ripgrep_core` green; `cargo clippy --tests -- -D warnings` clean; `cargo fmt --check` clean.
 
 Commits (oldest→newest): b509d0d, e18570a, b459f43, 191de86, 1daeb34, f4e82f6, 8a689c7, 1d702eb, 6a2cff5, 2144d15, 703d800, d12bf75, 75702fe, b87d6d1.
@@ -151,7 +156,10 @@ Running `bash scripts/generate-bindings.sh` produces, under `Sources/RipgrepKitF
 
 **DONE — Task 33 (package-release.sh).** Commit `6830e31`. Spec ✅ (clean re-run: 39.5MB zip, SHA-MATCH, valid xcframework, `dist/` gitignored) + controller code-quality ✅.
 
-**NEXT: Task 34** (`.github/workflows/release.yml`). **Apply Deviation #6: the plan's workflow has `cargo install uniffi-bindgen --version 0.28.0` — DROP that step entirely** (that crate/version doesn't exist; bindings come from the in-tree `cargo run -p uniffi-bindgen` invoked by `scripts/generate-bindings.sh`). Also: the workflow runs on a fresh `macos-14` runner (clean cargo state → Deviation #10 min-OS stamping works correctly). After Task 34: Task 35 (remote `binaryTarget(url:checksum:)`) is RELEASE-TIME-ONLY / **deferred-by-design** (no GitHub release exists; local `binaryTarget(path:)` stays for v0.1.0). Tasks 36-38 deferred.
+**DONE — Task 34 (`.github/workflows/release.yml`). ✅ PHASE 6 COMPLETE (33+34).** Commit `7dc5a8f`. Spec ✅ + controller code-quality ✅. Deviation #6 applied (no `cargo install uniffi-bindgen`). Task 35 deferred-by-design (see top). **All implementable tasks (14-34) complete.** NEXT: final whole-implementation code review → `superpowers:finishing-a-development-branch` (per user CLAUDE.md: `/codex:adversarial-review` before merge).
+
+<!-- HISTORICAL pointer below (superseded by STATUS banner at top of Progress) -->
+**(superseded) Task 34** (`.github/workflows/release.yml`). **Apply Deviation #6: the plan's workflow has `cargo install uniffi-bindgen --version 0.28.0` — DROP that step entirely** (that crate/version doesn't exist; bindings come from the in-tree `cargo run -p uniffi-bindgen` invoked by `scripts/generate-bindings.sh`). Also: the workflow runs on a fresh `macos-14` runner (clean cargo state → Deviation #10 min-OS stamping works correctly). After Task 34: Task 35 (remote `binaryTarget(url:checksum:)`) is RELEASE-TIME-ONLY / **deferred-by-design** (no GitHub release exists; local `binaryTarget(path:)` stays for v0.1.0). Tasks 36-38 deferred.
 
 ### ⚠️ Phase 3 critical watch-out (Task 18/19 — the integration linchpin)
 
