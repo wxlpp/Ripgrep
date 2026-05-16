@@ -15,11 +15,13 @@ pub struct SearchRequest {
     pub max_matches: Option<u32>,
     pub max_files: Option<u32>,
     pub max_file_size_bytes: Option<u64>,
-    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct Submatch {
+    // Byte offsets WITHIN a single matched line. u32 is sufficient: a single
+    // line exceeding 4 GiB is not a supported/realistic scenario. Widen to u64
+    // only if a real need arises (would ripple through UniFFI bindings + Swift).
     pub start: u32,
     pub end: u32,
 }

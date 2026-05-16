@@ -3,9 +3,34 @@ import Foundation
 
 extension Duration {
     /// Whole milliseconds (floored), suitable for FFI `UInt64?` timeout fields.
-    var ffiMilliseconds: UInt64 {
+    ///
+    /// Throws `Ripgrep.Error.invalidArguments` for negative or overflow-producing
+    /// durations so that a public `Codable` `Options.timeout` never causes an
+    /// uncatchable host-process trap (same invariant as the `UInt32` range guards
+    /// in `toFFI`).
+    func ffiMilliseconds() throws(Ripgrep.Error) -> UInt64 {
+        guard self >= .zero else {
+            throw .invalidArguments(
+                message: "timeout must be non-negative, got \(self)")
+        }
         let c = components
-        return UInt64(c.seconds * 1000 + c.attoseconds / 1_000_000_000_000_000)
+        // Check `seconds * 1000` for Int64 overflow.
+        let (sMs, ov) = c.seconds.multipliedReportingOverflow(by: 1000)
+        guard !ov else {
+            throw .invalidArguments(
+                message: "timeout too large to represent in milliseconds, got \(self)")
+        }
+        // attoseconds is in [0, 999_999_999_999_999_999] for a normalised
+        // non-negative Duration, so this division is always non-negative and
+        // fits Int64; no overflow possible.
+        let attoMs = c.attoseconds / 1_000_000_000_000_000
+        let totalMs = sMs + attoMs
+        // totalMs >= 0 because both terms are non-negative for a non-negative Duration.
+        guard let result = UInt64(exactly: totalMs) else {
+            throw .invalidArguments(
+                message: "timeout too large to represent in milliseconds, got \(self)")
+        }
+        return result
     }
 }
 
@@ -67,25 +92,45 @@ extension Ripgrep {
 extension Ripgrep.Options {
     // Throws (not `precondition`) on out-of-range fields: `Options` is a public
     // `Codable` value, so a JSON-decoded / hand-constructed instance with a
-    // negative field must be a recoverable error, not a host-process trap.
+    // negative or overflowing field must be a recoverable error, not a
+    // host-process trap (UInt32.init traps on overflow for 64-bit Int values).
     func toFFI(pattern: String, paths: [String]) throws(Ripgrep.Error) -> SearchRequest {
-        guard beforeContext >= 0 else {
-            throw .invalidArguments(message: "beforeContext must be ≥ 0, got \(beforeContext)")
+        guard (0...Int(UInt32.max)).contains(beforeContext) else {
+            throw .invalidArguments(
+                message: "beforeContext out of range [0, \(UInt32.max)], got \(beforeContext)")
         }
-        guard afterContext >= 0 else {
-            throw .invalidArguments(message: "afterContext must be ≥ 0, got \(afterContext)")
-        }
-        guard (maxMatches ?? 0) >= 0 else {
-            throw .invalidArguments(message: "maxMatches must be ≥ 0, got \(maxMatches!)")
-        }
-        guard (maxFiles ?? 0) >= 0 else {
-            throw .invalidArguments(message: "maxFiles must be ≥ 0, got \(maxFiles!)")
-        }
-        guard (maxFileSizeBytes ?? 0) >= 0 else {
-            throw .invalidArguments(message: "maxFileSizeBytes must be ≥ 0, got \(maxFileSizeBytes!)")
+        guard (0...Int(UInt32.max)).contains(afterContext) else {
+            throw .invalidArguments(
+                message: "afterContext out of range [0, \(UInt32.max)], got \(afterContext)")
         }
 
-        let timeoutMs: UInt64? = timeout?.ffiMilliseconds
+        let ffiMaxMatches: UInt32?
+        if let m = maxMatches {
+            guard (0...Int(UInt32.max)).contains(m) else {
+                throw .invalidArguments(
+                    message: "maxMatches out of range [0, \(UInt32.max)], got \(m)")
+            }
+            ffiMaxMatches = UInt32(m)
+        } else { ffiMaxMatches = nil }
+
+        let ffiMaxFiles: UInt32?
+        if let f = maxFiles {
+            guard (0...Int(UInt32.max)).contains(f) else {
+                throw .invalidArguments(
+                    message: "maxFiles out of range [0, \(UInt32.max)], got \(f)")
+            }
+            ffiMaxFiles = UInt32(f)
+        } else { ffiMaxFiles = nil }
+
+        // Int.max < UInt64.max on 64-bit, so only the lower bound can fail here.
+        let ffiMaxFileSizeBytes: UInt64?
+        if let s = maxFileSizeBytes {
+            guard s >= 0 else {
+                throw .invalidArguments(
+                    message: "maxFileSizeBytes must be ≥ 0, got \(s)")
+            }
+            ffiMaxFileSizeBytes = UInt64(s)
+        } else { ffiMaxFileSizeBytes = nil }
 
         return SearchRequest(
             pattern: pattern,
@@ -100,10 +145,9 @@ extension Ripgrep.Options {
             includeHidden: includeHidden,
             beforeContext: UInt32(beforeContext),
             afterContext: UInt32(afterContext),
-            maxMatches: maxMatches.map(UInt32.init),
-            maxFiles: maxFiles.map(UInt32.init),
-            maxFileSizeBytes: maxFileSizeBytes.map(UInt64.init),
-            timeoutMs: timeoutMs
+            maxMatches: ffiMaxMatches,
+            maxFiles: ffiMaxFiles,
+            maxFileSizeBytes: ffiMaxFileSizeBytes
         )
     }
 }

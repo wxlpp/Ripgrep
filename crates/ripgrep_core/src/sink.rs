@@ -10,6 +10,10 @@ use std::sync::Arc;
 
 /// Cancel check cadence — Sink polls cancel token every N events.
 const CANCEL_CHECK_EVERY: usize = 100;
+/// Cancel check byte threshold — also poll when accumulated bytes since last check
+/// reach this limit. Bounds cancel latency on large/giant lines (e.g. minified JS)
+/// where event count alone would not reach CANCEL_CHECK_EVERY in time.
+const CANCEL_CHECK_BYTES: usize = 1 << 20; // 1 MiB
 
 /// Sink that pushes matches onto a crossbeam channel. Holds rolling
 /// before-context buffers per file and emits after-context lines via
@@ -23,7 +27,9 @@ pub struct ChannelSink<M: Matcher> {
     before_buf: VecDeque<String>,
     pending_after: Vec<SearchMatch>,
     events_since_check: usize,
+    bytes_since_check: usize,
     before_context: usize,
+    after_context: usize,
 }
 
 impl<M: Matcher> ChannelSink<M> {
@@ -34,6 +40,7 @@ impl<M: Matcher> ChannelSink<M> {
         match_counter: Arc<AtomicUsize>,
         matcher: M,
         before_context: usize,
+        after_context: usize,
     ) -> Self {
         Self {
             path,
@@ -44,14 +51,20 @@ impl<M: Matcher> ChannelSink<M> {
             before_buf: VecDeque::with_capacity(before_context.max(1)),
             pending_after: Vec::new(),
             events_since_check: 0,
+            bytes_since_check: 0,
             before_context,
+            after_context,
         }
     }
 
-    fn poll_cancel(&mut self) -> bool {
+    fn poll_cancel(&mut self, bytes: usize) -> bool {
         self.events_since_check += 1;
-        if self.events_since_check >= CANCEL_CHECK_EVERY {
+        self.bytes_since_check += bytes;
+        if self.events_since_check >= CANCEL_CHECK_EVERY
+            || self.bytes_since_check >= CANCEL_CHECK_BYTES
+        {
             self.events_since_check = 0;
+            self.bytes_since_check = 0;
             return self.cancel.is_cancelled();
         }
         false
@@ -89,7 +102,13 @@ impl<M: Matcher> Sink for ChannelSink<M> {
     type Error = SinkAbort;
 
     fn matched(&mut self, _: &Searcher, m: &SinkMatch<'_>) -> Result<bool, Self::Error> {
-        if self.poll_cancel() {
+        if self.poll_cancel(m.bytes().len()) {
+            // Cancel: return Ok(false) — grep_searcher stops this file's search
+            // IMMEDIATELY and STILL calls finish(), so flush_pending() runs and
+            // already-collected matches are preserved. Do NOT change to Err(SinkAbort):
+            // it stops just as immediately but SKIPS finish() (losing pending matches)
+            // for zero latency gain. Cancel-poll cadence (event OR byte threshold,
+            // v0.2-P6) is the actual latency lever.
             return Ok(false);
         }
 
@@ -114,7 +133,7 @@ impl<M: Matcher> Sink for ChannelSink<M> {
             }
         }
 
-        let line_number = m.line_number().unwrap_or(0);
+        let line_number = m.line_number().unwrap_or(0); // line numbers are enabled (search.rs sb.line_number(true)); 0 only on searcher misconfig
         let before: Vec<String> = self.before_buf.iter().cloned().collect();
 
         let sm = SearchMatch {
@@ -131,7 +150,10 @@ impl<M: Matcher> Sink for ChannelSink<M> {
     }
 
     fn context(&mut self, _: &Searcher, ctx: &SinkContext<'_>) -> Result<bool, Self::Error> {
-        if self.poll_cancel() {
+        if self.poll_cancel(ctx.bytes().len()) {
+            // Same contract as matched(): Ok(false) stops immediately, finish()
+            // still runs → flush_pending() preserves collected matches. See comment
+            // in matched() above for full rationale. Do NOT change to Err(SinkAbort).
             return Ok(false);
         }
         let line = String::from_utf8_lossy(ctx.bytes())
@@ -147,8 +169,26 @@ impl<M: Matcher> Sink for ChannelSink<M> {
                 }
             }
             SinkContextKind::After => {
-                if let Some(m) = self.pending_after.last_mut() {
-                    m.after_context.push(line);
+                // Attribute this after-context line to every pending match
+                // whose -A window covers it. A match at line `m_line` with
+                // an after-context of `N` should receive lines
+                // [m_line+1 .. m_line+N] (inclusive).
+                // If grep_searcher does not supply an absolute line number,
+                // fall back to the last pending match to avoid data loss.
+                if let Some(abs_line) = ctx.line_number() {
+                    for m in &mut self.pending_after {
+                        let m_line = m.line_number;
+                        if m_line < abs_line
+                            && abs_line <= m_line.saturating_add(self.after_context as u64)
+                        {
+                            m.after_context.push(line.clone());
+                        }
+                    }
+                } else {
+                    debug_assert!(false, "ChannelSink: ctx.line_number() is None; SearcherBuilder must enable line_number(true)");
+                    if let Some(m) = self.pending_after.last_mut() {
+                        m.after_context.push(line);
+                    }
                 }
             }
             SinkContextKind::Other => {}
