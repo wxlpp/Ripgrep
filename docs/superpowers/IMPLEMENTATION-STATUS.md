@@ -66,7 +66,23 @@ Running `bash scripts/generate-bindings.sh` produces, under `Sources/RipgrepKitF
 - Task 19 is the FIRST `swift build`/`swift test`. The xcframework must exist locally first (`bash scripts/build-xcframework.sh`). Deviation #9 module-collision watch-out becomes concrete here — resolve empirically.
 - Nice-to-have (not blocking): add a one-line "run scripts/build-xcframework.sh before swift build" note to `README.md` (full README is deferred Task 37).
 
-**NEXT: Task 19** (stub Swift targets + first `swift build`). Tasks 36-38 deferred. Task 35 release-time-only.
+**DONE — Task 19 (stub Swift targets; Phase 2↔3 integration PROVEN).** Commits `10cdebe` + `f9bf39d`. Spec ✅ + code-quality ✅. `swift build` + `swift test` (2 placeholders) green; the `RipgrepCore.xcframework` binaryTarget is genuinely linked (45.9M framework in `.build`).
+
+11. **`RipgrepKitFFI` target needs Swift-5 language mode + sources allowlist.** UniFFI-generated `RipgrepCore.swift` has a module-level lazy global (`private var initializationResult`) that is a hard Swift 6 `MutableGlobalVariable` error. Resolution (in `Package.swift`, scoped ONLY to the `RipgrepKitFFI` target — package stays `swiftLanguageModes: [.v6]`):
+    ```swift
+    .target(name: "RipgrepKitFFI",
+            dependencies: ["RipgrepCore"],
+            sources: ["RipgrepCore.swift"],            // allowlist: ignores generated .h/.modulemap (those feed scripts/build-xcframework.sh + the xcframework)
+            swiftSettings: [.swiftLanguageMode(.v5)]),
+    ```
+    `.h`/`.modulemap` stay committed in `Sources/RipgrepKitFFI/` (NOT in the Swift target). The `RipgrepCoreFFI` clang module is vended by the binaryTarget xcframework. This is the standard UniFFI+Swift6 pattern.
+
+### CRITICAL carry-forwards for upcoming tasks (from Task 19 review — bake into implementer prompts)
+
+- **Task 23 (`Ripgrep.search` async wiring) — Sendable boundary.** `RipgrepKitFFI` is Swift-5 mode → UniFFI types carry NO `Sendable`. `RipgrepKitCore` is Swift 6. Task 23's `withTaskCancellationHandler` + detached `Task` passing `CancelToken` (an `open class`) / `SearchRequest` / `SearchResult` across isolation WILL produce Swift 6 errors ("Capture of non-sendable type 'CancelToken'..."). Pre-warn the implementer: add `@preconcurrency import RipgrepKitFFI` in the file doing async work; if `CancelToken` capture still complains, use a thin internal `struct CancelHandle: @unchecked Sendable { let token: CancelToken }` wrapper (semantically honest — the Rust token is cross-thread by design). Tasks 20-22 (Error/Options/SearchResult value types) likely only need plain or `@preconcurrency import`.
+- **Task 27 & 31 (RipgrepKitTool).** `Sources/RipgrepKitTool/Stub.swift` is currently `@_exported import RipgrepKitCore` (plan-exact stub). This MUST be deleted/replaced when RipgrepKitTool gets real code, or it silently re-exports all of RipgrepKitCore's API through the Tool product (breaks the product layering). The Task 27/31 implementer must remove this stub file's `@_exported` line.
+
+**NEXT: Task 20** (RipgrepKitCore Error type). Tasks 36-38 deferred. Task 35 release-time-only.
 
 ### ⚠️ Phase 3 critical watch-out (Task 18/19 — the integration linchpin)
 
