@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust targets
+        run: |
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios \
+                            aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Build XCFramework
+        run: bash scripts/build-xcframework.sh
+
+      - name: Generate Swift bindings
+        run: bash scripts/generate-bindings.sh
+
+      - name: Run tests
+        run: |
+          cargo test -p ripgrep_core
+          swift test
+
+      - name: Package release
+        run: bash scripts/package-release.sh
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/RipgrepCore.xcframework.zip
+            dist/RipgrepCore.xcframework.zip.sha256
+          generate_release_notes: true
