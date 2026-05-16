@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import RipgrepKitFFI
 
 extension Ripgrep {
     /// - Note: `Codable` uses synthesized coding keys. A future **non-optional**
@@ -52,5 +53,39 @@ extension Ripgrep {
             self.maxFileSizeBytes = maxFileSizeBytes
             self.timeout = timeout
         }
+    }
+}
+
+extension Ripgrep.Options {
+    func toFFI(pattern: String, paths: [String]) -> SearchRequest {
+        precondition(beforeContext >= 0, "beforeContext must be ≥ 0")
+        precondition(afterContext >= 0, "afterContext must be ≥ 0")
+        precondition((maxMatches ?? 0) >= 0, "maxMatches must be ≥ 0")
+        precondition((maxFiles ?? 0) >= 0, "maxFiles must be ≥ 0")
+        precondition((maxFileSizeBytes ?? 0) >= 0, "maxFileSizeBytes must be ≥ 0")
+
+        let timeoutMs: UInt64? = timeout.flatMap {
+            let comp = $0.components
+            return UInt64(comp.seconds * 1000 + comp.attoseconds / 1_000_000_000_000_000)
+        }
+
+        return SearchRequest(
+            pattern: pattern,
+            paths: paths.isEmpty ? ["."] : paths,
+            caseInsensitive: caseInsensitive,
+            smartCase: smartCase,
+            multiline: multiline,
+            includeGlobs: include,
+            excludeGlobs: exclude,
+            fileTypes: fileTypes,
+            respectGitignore: respectGitignore,
+            includeHidden: includeHidden,
+            beforeContext: UInt32(beforeContext),
+            afterContext: UInt32(afterContext),
+            maxMatches: maxMatches.map(UInt32.init),
+            maxFiles: maxFiles.map(UInt32.init),
+            maxFileSizeBytes: maxFileSizeBytes.map(UInt64.init),
+            timeoutMs: timeoutMs
+        )
     }
 }
