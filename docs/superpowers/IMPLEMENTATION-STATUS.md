@@ -143,7 +143,11 @@ Running `bash scripts/generate-bindings.sh` produces, under `Sources/RipgrepKitF
 
 - **Reinforces the Task 31 JSON-key decision:** the `--json` tool output is our `Match` struct with **camelCase synthesized keys** (`lineNumber`, not rg's `line_number`). For the LLM tool contract (`handleToolCall` returns the raw string to the LLM) this is acceptable/LLM-opaque. Only add `CodingKeys` (snake_case) if Task 31 introduces a consumer that parses it as rg-JSON. Decide explicitly at Task 31.
 
-**NEXT: Task 31** (Tool — toolSchema, ToolInput, handleToolCall — LLM integration). Carry-forwards: (a) `--help`/`--version` → `CleanExit` → currently mapped to `Ripgrep.Error.invalidArguments` by Parse.swift's catch-all; for `handleToolCall` an LLM passing `--help` would get a help dump as `ERROR:` — decide: catch `CleanExit` separately OR document in `toolSchema` that `--help`/`--version` aren't valid tool inputs. (b) JSON-key camelCase decision above. Tasks 36-38 deferred. Task 35 release-time-only.
+**DONE — Task 31 (Tool — toolSchema/ToolInput/handleToolCall). ✅ PHASE 5 CODE COMPLETE.** Commit `bcb0a8b`. Spec ✅ (toolSchema independently parsed valid; handleToolCall anti-vacuity proven) + controller code-quality ✅. Verbatim plan. **Decisions:** `--help`/`--version`→`ERROR: <usage>` ACCEPTED for v0.1.0 (informative LLM feedback, not a crash; toolSchema documents the supported subset). camelCase JSON keys ACCEPTED (LLM-opaque). 48 swift tests + 33 Rust tests, 0 warnings.
+
+15. **MINOR v0.1.0 polish (pre-existing, Task 20 area — NOT blocking):** `Ripgrep.Error.invalidPattern` renders as `"invalid regex: \(p)"` (Task 20), but the Rust-supplied `p` for a regex-compile failure already begins `"invalid regex: regex parse error: ..."`, so user-facing messages double-prefix: `ERROR: invalid regex: invalid regex: regex parse error...`. Cosmetic only; functional behavior correct. If polished pre-v0.1.0: either drop the `"invalid regex: "` prefix in `Error.message` for `.invalidPattern`, or strip it from the Rust error string. Surfaced, not reworked (Task 20 plan-verbatim, out of Task 31 scope).
+
+**NEXT: Task 32** (Full test suite green-light — run `cargo test -p ripgrep_core` + `swift test`, all green, commit `--allow-empty`). Per Task 31 report: already 48 swift + 33 rust green, 0 warnings — Task 32 should be a confirmation pass. Then Phase 6 (33-34). Task 35 release-time-only (no GitHub release). Tasks 36-38 deferred.
 
 ### ⚠️ Phase 3 critical watch-out (Task 18/19 — the integration linchpin)
 
