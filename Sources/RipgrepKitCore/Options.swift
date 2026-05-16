@@ -85,8 +85,6 @@ extension Ripgrep.Options {
             throw .invalidArguments(message: "maxFileSizeBytes must be ≥ 0, got \(maxFileSizeBytes!)")
         }
 
-        let timeoutMs: UInt64? = timeout?.ffiMilliseconds
-
         return SearchRequest(
             pattern: pattern,
             paths: paths.isEmpty ? ["."] : paths,
@@ -102,8 +100,7 @@ extension Ripgrep.Options {
             afterContext: UInt32(afterContext),
             maxMatches: maxMatches.map(UInt32.init),
             maxFiles: maxFiles.map(UInt32.init),
-            maxFileSizeBytes: maxFileSizeBytes.map(UInt64.init),
-            timeoutMs: timeoutMs
+            maxFileSizeBytes: maxFileSizeBytes.map(UInt64.init)
         )
     }
 }

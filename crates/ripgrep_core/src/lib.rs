@@ -49,7 +49,6 @@ mod options_tests {
             max_matches: None,
             max_files: None,
             max_file_size_bytes: None,
-            timeout_ms: None,
         };
         assert_eq!(r.pattern, "todo");
     }
@@ -96,7 +95,6 @@ mod search_matcher_tests {
             max_matches: None,
             max_files: None,
             max_file_size_bytes: None,
-            timeout_ms: None,
         }
     }
 
@@ -238,7 +236,6 @@ mod walker_tests {
             max_matches: None,
             max_files: None,
             max_file_size_bytes: None,
-            timeout_ms: None,
         }
     }
 
@@ -340,7 +337,6 @@ mod search_e2e_tests {
             max_matches: None,
             max_files: None,
             max_file_size_bytes: None,
-            timeout_ms: None,
         }
     }
 
@@ -460,10 +456,8 @@ mod limits_tests {
 
     #[test]
     fn timeout_marks_result_cancelled() {
-        let mut r = req("xxxxxxxxxxxxxxxxx_no_match"); // forces full scan
-        r.timeout_ms = Some(1); // 1 ms — extremely tight
-                                // Big enough fixture: just our mini, but we set timeout to 0 so it trips
-                                // even on tiny dirs.
+        // Timeout is entirely CancelToken-driven; pass a pre-tripped token (deadline=0).
+        let r = req("xxxxxxxxxxxxxxxxx_no_match"); // forces full scan
         let res = search_blocking(
             r,
             CancelToken::new(Some(0)), // pre-tripped

@@ -15,7 +15,6 @@ pub struct SearchRequest {
     pub max_matches: Option<u32>,
     pub max_files: Option<u32>,
     pub max_file_size_bytes: Option<u64>,
-    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
