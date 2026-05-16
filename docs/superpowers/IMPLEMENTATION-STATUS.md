@@ -38,9 +38,20 @@ Commits (oldest→newest): b509d0d, e18570a, b459f43, 191de86, 1daeb34, f4e82f6,
 | 12 panic containment | ✅ |
 | 13 clippy/fmt closeout | ✅ |
 
-**DONE — Task 14 (UniFFI scaffolding).** Commits `75412c0` (scaffolding) + `13517db` (review fixes). Spec ✅ + code-quality ✅. 33 Rust tests. Plus pre-flight commits `242dffd` (rustfmt sink.rs + Cargo.lock) and `0aafbac` (doc).
+**DONE — Task 14 (UniFFI scaffolding).** Commits `75412c0` + `13517db`. Spec ✅ + code-quality ✅.
 
-**NEXT: Task 15** (Generate Swift bindings) through Task 35. Tasks 36-38 deferred (fuzz/README/symlink-loop). Task 35 is release-time-only (no GitHub release yet).
+**DONE — Task 15 (Generate Swift bindings).** Commits `bd15e9d` + `8b1a5a5`. Spec ✅ (regen byte-identical) + code-quality ✅. crate-type now `["staticlib","cdylib","rlib"]` (Deviation #8). `scripts/generate-bindings.sh` uses `cargo run -p uniffi-bindgen` and respects `CARGO_TARGET_DIR` + purges stale output.
+
+### Generated FFI artifacts (committed; consumed by Tasks 16/18 — DO NOT hand-edit)
+
+Running `bash scripts/generate-bindings.sh` produces, under `Sources/RipgrepKitFFI/`:
+- `RipgrepCore.swift` (~1278 lines — the Swift API)
+- `RipgrepCoreFFI.h` (~594 lines)
+- `RipgrepCoreFFI.modulemap` — declares `module RipgrepCoreFFI { header "RipgrepCoreFFI.h" export * }`
+
+**Critical naming for Task 16/18 reconciliation:** the clang module is **`RipgrepCoreFFI`** (NOT `RipgrepCore`). The plan's Task 16 xcframework script and Task 18 Package.swift were written assuming `RipgrepCore`/`RipgrepCoreFFI.h` — header filename matches, but the binaryTarget/framework/module layering must be reconciled against these ACTUAL names when Task 16/18 run. Exported entrypoint: `public func searchBlocking(request: SearchRequest, cancel: CancelToken) throws -> SearchResult`. `CancelToken` = `open class`, `SearchRequest`/`SearchResult`/`Submatch`/`SearchMatch` = structs, `RipgrepError` = `public enum`. UniFFI auto-converted `search_blocking` → `searchBlocking`.
+
+**NEXT: Task 16** (single-slice XCFramework) through Task 35. Tasks 36-38 deferred (fuzz/README/symlink-loop). Task 35 is release-time-only (no GitHub release yet).
 
 **FOUNDATION FLAKE — RESOLVED (commit `057c9be`, 2026-05-16).** `limits_tests::max_matches_truncates_and_flags` flaked ~20-40% under parallel test execution (pre-existing Phase 1 defect, not a Task 14 regression). Root cause: off-by-one in `crates/ripgrep_core/src/search.rs` truncation detection — `if matches.len() > max` should be `>= max`. When the parallel walker stopped at exactly `max` matches, `truncated` was wrongly `false`. Fixed to `>= max`. Verified deterministic: 50× targeted + 30× full-suite (debugger) + 6× full-suite (controller), 0 failures. 33 tests stable.
 
@@ -67,6 +78,12 @@ Commits (oldest→newest): b509d0d, e18570a, b459f43, 191de86, 1daeb34, f4e82f6,
 7. **PLAN ERRATA — `max_matches` truncation off-by-one (resolved in code, NOT in plan).** The plan at `docs/superpowers/plans/2026-05-15-ripgrep-swift-package.md` ~line 1229 (Task 10 region) shows `if matches.len() > max`. That is a bug — correct is `>= max` (collecting exactly `max` means the limit was hit, so `truncated` must be true). Fixed in `search.rs` at commit `057c9be`. If any future task re-applies that plan snippet verbatim, do NOT reintroduce `> max`. The plan code blocks are reference, not gospel — implementers should prefer the committed source.
 
 8. **`crate-type` lacks `cdylib` — blocks `uniffi-bindgen --library` (Task 15).** Task 1 set `crates/ripgrep_core/Cargo.toml` `crate-type = ["staticlib", "rlib"]`. `cargo build --release` produces only `libripgrep_core.a` + `.rlib`, NO `.dylib`. But `uniffi-bindgen generate --library` (proc-macro mode) needs a cdylib to introspect metadata. The plan/spec never pinned crate-type. **Fix (folded into Task 15 scope, since the bindings artifact depends on it):** change to `crate-type = ["staticlib", "cdylib", "rlib"]` (additive — `staticlib` still feeds the xcframework in Tasks 16/17, `rlib` still feeds `cargo test`, `cdylib` produces `libripgrep_core.dylib` for bindgen). Generated-file naming note: uniffi 0.28 proc-macro mode emits files named by the crate namespace (`ripgrep_core.swift`, `ripgrep_coreFFI.h`, `ripgrep_coreFFI.modulemap`); `module_name="RipgrepCore"` in uniffi.toml only sets the *clang module* name inside the modulemap, NOT the filenames. Tasks 16/18 (which the plan wrote expecting `RipgrepCoreFFI.h`) must be reconciled to the ACTUAL generated filenames — Task 15 implementer reports them; controller reconciles at Task 16.
+
+9. **XCFramework module name MUST be `RipgrepCoreFFI`, not `RipgrepCore` (Task 16/17/18 reconciliation).** Verified: generated `Sources/RipgrepKitFFI/RipgrepCore.swift` does `#if canImport(RipgrepCoreFFI)` and the generated modulemap declares `module RipgrepCoreFFI`. SwiftPM binaryTarget vends the **framework's internal module name** (from the framework's `Modules/module.modulemap`), NOT the binaryTarget `name:` nor the `.xcframework` filename. So the plan's Task 16 `FRAMEWORK_NAME="RipgrepCore"` would make Task 19 `swift build` fail with "no such module 'RipgrepCoreFFI'". **Resolution:**
+   - The staged `.framework` inside the xcframework = `RipgrepCoreFFI.framework`; its binary = `RipgrepCoreFFI`; header = `Headers/RipgrepCoreFFI.h`; `Modules/module.modulemap` = `framework module RipgrepCoreFFI { umbrella header "RipgrepCoreFFI.h" export * module * { export * } }`.
+   - KEEP the xcframework output filename `Frameworks/RipgrepCore.xcframework` and Package.swift `binaryTarget(name:"RipgrepCore", path:"Frameworks/RipgrepCore.xcframework")` (matches spec, .gitignore line 5 `Frameworks/RipgrepCore.xcframework/`, release zip `RipgrepCore.xcframework.zip`). The binaryTarget `name:` is just a SwiftPM dependency identifier; consumers `import RipgrepCoreFFI` (the framework module), and the generated swift already hardcodes that.
+   - Applied in Task 16 (single-slice) + Task 17 (5-slice `stage_framework*` fns).
+   - **Phase 3 watch-out (Task 18/19):** `Sources/RipgrepKitFFI/` currently also holds the generated `RipgrepCoreFFI.h` + `RipgrepCoreFFI.modulemap`. The C module actually comes from the binaryTarget framework. Having a second `RipgrepCoreFFI` modulemap/header in the `RipgrepKitFFI` Swift target's source dir may collide with the framework's module at `swift build`. Decide at Task 18/19 whether `RipgrepKitFFI` should contain ONLY `RipgrepCore.swift` (and the .h/.modulemap should be excluded from that target / live only in the xcframework). Not Task 16's problem (Task 16 = build-only smoke test).
 
 ## Phase 2 Watch-outs (Task 14+)
 
