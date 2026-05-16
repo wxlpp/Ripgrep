@@ -79,5 +79,6 @@ private func parseFilesize(_ s: String) -> Int? {
     case "G", "g": mult = 1024*1024*1024;  numericPart = String(s.dropLast())
     default:       mult = 1;               numericPart = s
     }
-    return Int(numericPart).map { $0 * mult }
+    guard let n = Int(numericPart), n >= 0 else { return nil }
+    return n * mult
 }

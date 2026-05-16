@@ -51,4 +51,19 @@ final class ParseTests: XCTestCase {
             } else { XCTFail() }
         }
     }
+
+    func testMaxFilesizeParsing() throws {
+        XCTAssertEqual(try Ripgrep.parse("x --max-filesize 5M").options.maxFileSizeBytes, 5 * 1024 * 1024)
+        XCTAssertEqual(try Ripgrep.parse("x --max-filesize 1K").options.maxFileSizeBytes, 1024)
+        XCTAssertEqual(try Ripgrep.parse("x --max-filesize 100").options.maxFileSizeBytes, 100)
+        XCTAssertNil(try Ripgrep.parse("x --max-filesize bad").options.maxFileSizeBytes)
+        XCTAssertNil(try Ripgrep.parse("x --max-filesize=-5M").options.maxFileSizeBytes)
+    }
+
+    func testCaseFlagsMapIntoOptions() throws {
+        let p = try Ripgrep.parse("-i -S -U pat")
+        XCTAssertTrue(p.options.caseInsensitive)
+        XCTAssertTrue(p.options.smartCase)
+        XCTAssertTrue(p.options.multiline)
+    }
 }
