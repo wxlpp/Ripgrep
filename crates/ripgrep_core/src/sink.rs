@@ -24,6 +24,7 @@ pub struct ChannelSink<M: Matcher> {
     pending_after: Vec<SearchMatch>,
     events_since_check: usize,
     before_context: usize,
+    after_context: usize,
 }
 
 impl<M: Matcher> ChannelSink<M> {
@@ -34,6 +35,7 @@ impl<M: Matcher> ChannelSink<M> {
         match_counter: Arc<AtomicUsize>,
         matcher: M,
         before_context: usize,
+        after_context: usize,
     ) -> Self {
         Self {
             path,
@@ -45,6 +47,7 @@ impl<M: Matcher> ChannelSink<M> {
             pending_after: Vec::new(),
             events_since_check: 0,
             before_context,
+            after_context,
         }
     }
 
@@ -147,7 +150,20 @@ impl<M: Matcher> Sink for ChannelSink<M> {
                 }
             }
             SinkContextKind::After => {
-                if let Some(m) = self.pending_after.last_mut() {
+                // Attribute this after-context line to every pending match
+                // whose -A window covers it. A match at line `m_line` with
+                // an after-context of `N` should receive lines
+                // [m_line+1 .. m_line+N] (inclusive).
+                // If grep_searcher does not supply an absolute line number,
+                // fall back to the last pending match to avoid data loss.
+                if let Some(abs_line) = ctx.line_number() {
+                    for m in &mut self.pending_after {
+                        let m_line = m.line_number;
+                        if m_line < abs_line && abs_line <= m_line + self.after_context as u64 {
+                            m.after_context.push(line.clone());
+                        }
+                    }
+                } else if let Some(m) = self.pending_after.last_mut() {
                     m.after_context.push(line);
                 }
             }

@@ -108,6 +108,7 @@ fn search_blocking_inner(
                 Arc::clone(&match_counter),
                 matcher.clone(),
                 before,
+                after,
             );
             let mut sb = SearcherBuilder::new();
             sb.before_context(before);
