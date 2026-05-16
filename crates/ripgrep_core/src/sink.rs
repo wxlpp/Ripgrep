@@ -30,6 +30,10 @@ pub struct ChannelSink<M: Matcher> {
     bytes_since_check: usize,
     before_context: usize,
     after_context: usize,
+    /// High-water mark of `pending_after.len()` observed after each push.
+    /// Tracked only in test builds to verify the eviction bound.
+    #[cfg(test)]
+    max_pending_seen: usize,
 }
 
 impl<M: Matcher> ChannelSink<M> {
@@ -54,7 +58,23 @@ impl<M: Matcher> ChannelSink<M> {
             bytes_since_check: 0,
             before_context,
             after_context,
+            #[cfg(test)]
+            max_pending_seen: 0,
         }
+    }
+
+    /// Returns the current length of `pending_after`.
+    /// Used only in tests to verify the eviction bound.
+    #[cfg(test)]
+    pub fn pending_len(&self) -> usize {
+        self.pending_after.len()
+    }
+
+    /// Returns the highest `pending_after.len()` observed after any push during
+    /// the search.  Used only in tests to assert the O(after_context) bound.
+    #[cfg(test)]
+    pub fn max_pending_seen(&self) -> usize {
+        self.max_pending_seen
     }
 
     fn poll_cancel(&mut self, bytes: usize) -> bool {
@@ -72,6 +92,35 @@ impl<M: Matcher> ChannelSink<M> {
 
     fn flush_pending(&mut self) {
         for m in self.pending_after.drain(..) {
+            let _ = self.tx.send(m);
+            self.match_counter.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Drain and send the matured prefix of `pending_after`.
+    ///
+    /// A match `m` is matured once `cur > m.line_number + after_context`: it can
+    /// receive no more After lines.  Because matches are pushed in ascending
+    /// `line_number` order and `after_context` is constant, matured matches always
+    /// form a **prefix** of `pending_after`, so we can drain from the front.
+    ///
+    /// Call sites:
+    ///  • `matched()` with `cur = new_match.line_number` (before pushing new match)
+    ///  • `context()` After branch with `cur = abs_line` (before attributing the
+    ///    current line — matured matches have `m.line+after < abs_line` and thus
+    ///    `abs_line` is outside their window, so calling before attribution is correct
+    ///    and simplest)
+    fn flush_matured(&mut self, cur: u64) {
+        let after = self.after_context as u64;
+        // Count the matured prefix (m.line_number + after < cur) without any
+        // extra allocation.  The Vec is in ascending line order, so we can stop
+        // at the first non-matured entry.
+        let n = self
+            .pending_after
+            .iter()
+            .take_while(|m| m.line_number.saturating_add(after) < cur)
+            .count();
+        for m in self.pending_after.drain(..n) {
             let _ = self.tx.send(m);
             self.match_counter.fetch_add(1, Ordering::Relaxed);
         }
@@ -136,6 +185,10 @@ impl<M: Matcher> Sink for ChannelSink<M> {
         let line_number = m.line_number().unwrap_or(0); // line numbers are enabled (search.rs sb.line_number(true)); 0 only on searcher misconfig
         let before: Vec<String> = self.before_buf.iter().cloned().collect();
 
+        // Evict any pending match that can no longer receive After lines:
+        // m.line + after_context < line_number  ⟹  matured.
+        self.flush_matured(line_number);
+
         let sm = SearchMatch {
             path: self.path.clone(),
             line_number,
@@ -146,6 +199,12 @@ impl<M: Matcher> Sink for ChannelSink<M> {
         };
         // Defer actual send until after-context is collected.
         self.pending_after.push(sm);
+        #[cfg(test)]
+        {
+            if self.pending_after.len() > self.max_pending_seen {
+                self.max_pending_seen = self.pending_after.len();
+            }
+        }
         Ok(true)
     }
 
@@ -176,6 +235,10 @@ impl<M: Matcher> Sink for ChannelSink<M> {
                 // If grep_searcher does not supply an absolute line number,
                 // fall back to the last pending match to avoid data loss.
                 if let Some(abs_line) = ctx.line_number() {
+                    // Evict matured matches before attributing: a matured match
+                    // has m.line + after_context < abs_line, so abs_line is outside
+                    // its window and it will never receive another After line.
+                    self.flush_matured(abs_line);
                     for m in &mut self.pending_after {
                         let m_line = m.line_number;
                         if m_line < abs_line
