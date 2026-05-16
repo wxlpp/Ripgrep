@@ -38,6 +38,10 @@ extension Ripgrep {
             self.elapsed = elapsed
         }
 
+        /// - Note: Does NOT deduplicate overlapping context between adjacent
+        ///   same-file matches (unlike `rg`, which inserts `--` separators and
+        ///   merges overlapping windows). Acceptable for the v0.1.0 LLM-tool
+        ///   contract; revisit if exact rg-parity text output is required.
         public func formattedAsText() -> String {
             var lines: [String] = []
             var lastPath: String? = nil
@@ -58,6 +62,10 @@ extension Ripgrep {
             return lines.joined(separator: "\n")
         }
 
+        /// - Note: `try?` on `enc.encode` is safe because every `Match` field is
+        ///   trivially `Encodable` (String/Int/[String]/[Submatch]); a match can
+        ///   never be silently dropped today. If a future non-trivially-Encodable
+        ///   field is added to `Match`, replace this with explicit error handling.
         public func formattedAsJSONLines() -> String {
             let enc = JSONEncoder()
             enc.outputFormatting = []
