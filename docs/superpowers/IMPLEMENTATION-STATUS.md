@@ -52,12 +52,19 @@ Commits (oldest→newest): b509d0d, e18570a, b459f43, 191de86, 1daeb34, f4e82f6,
 
 5. **`#[allow(dead_code)]` on `SearchResult.elapsed_ms`** in options.rs — intentional, commented "Exported to Swift via UniFFI". It becomes live once Task 14 adds UniFFI derives.
 
+6. **uniffi-bindgen install is broken in the plan (resolved 2026-05-16).** Plan Task 15 + Task 34 call `cargo install uniffi-bindgen --version 0.28.0`. That crate/version does NOT exist on crates.io (`error: could not find uniffi-bindgen in registry crates-io with version =0.28.3` either). Resolved uniffi lib version is **0.28.3**. Per official UniFFI 0.28 docs (context7 /mozilla/uniffi-rs), the correct pattern is an **in-tree bindgen binary**:
+   - Cargo.toml: `uniffi = { version = "0.28", features = ["build", "cli"] }` (add `cli`)
+   - Create `crates/ripgrep_core/src/bin/uniffi-bindgen.rs` containing `fn main() { uniffi::uniffi_bindgen_main() }` (cargo auto-discovers `src/bin/*`)
+   - Invoke via `cargo run -p ripgrep_core --bin uniffi-bindgen -- generate --library target/release/libripgrep_core.dylib --language swift --out-dir Sources/RipgrepKitFFI`
+   - Applied in: Task 14 (Cargo.toml + bin file), Task 15 (`scripts/generate-bindings.sh` uses `cargo run --bin uniffi-bindgen`, not bare `uniffi-bindgen`), Task 34 (drop the `cargo install uniffi-bindgen` CI step).
+   - Pre-flight env state (2026-05-16): all 5 Apple Rust targets installed; Xcode 26.4 present; Cargo.lock now committed; sink.rs rustfmt fixup committed (242dffd).
+
 ## Phase 2 Watch-outs (Task 14+)
 
 - Task 14 adds `uniffi::setup_scaffolding!()`, `#[derive(uniffi::Record)]`, `#[derive(uniffi::Object)]` on CancelToken, `#[uniffi::export]` on a `search_blocking` wrapper. The CancelToken constructor changes to return `Arc<Self>` for UniFFI — adjust all Rust call sites (tests construct `CancelToken::new(None)`; if it becomes `Arc`, tests need `Arc`-aware updates).
 - The plan's `build.rs` references a `.udl` file but the design uses proc-macro mode. The plan note says UDL is optional fallback — proc-macro `setup_scaffolding!()` is the primary path. Don't create a UDL unless bindgen demands it.
-- `uniffi-bindgen` CLI must be installed: `cargo install uniffi-bindgen --version 0.28.0` (or match the resolved uniffi crate version).
-- Tasks 16-17 need Apple Rust targets installed: `rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios aarch64-apple-darwin x86_64-apple-darwin`.
+- `uniffi-bindgen`: do NOT `cargo install` it (broken — see Deviation #6). Use the in-tree bin via `cargo run --bin uniffi-bindgen`.
+- Apple Rust targets: already installed (all 5, done 2026-05-16).
 - Tasks 16-17 (xcframework) and 18+ (Swift) require Xcode toolchain; these are the highest-risk tasks — budget for fix-and-retry loops; prefer `sonnet` model for implementers there.
 
 ## Model Selection Used So Far
