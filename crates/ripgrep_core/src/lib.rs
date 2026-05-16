@@ -455,7 +455,7 @@ mod limits_tests {
     }
 
     #[test]
-    fn timeout_marks_result_cancelled() {
+    fn pre_expired_cancel_marks_result_cancelled() {
         // Timeout is entirely CancelToken-driven; pass a pre-tripped token (deadline=0).
         let r = req("xxxxxxxxxxxxxxxxx_no_match"); // forces full scan
         let res = search_blocking(
