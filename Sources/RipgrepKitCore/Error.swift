@@ -2,7 +2,7 @@ import RipgrepKitFFI
 
 extension Ripgrep {
     public enum Error: Swift.Error, Sendable {
-        case invalidArguments(message: String)
+        case invalidArguments(message: String)  // labeled: parser-generated, not FFI-bridged
         case invalidPattern(String)
         case pathNotFound(String)
         case io(String)
@@ -18,7 +18,10 @@ extension Ripgrep {
             }
         }
 
-        /// Maps a UniFFI-generated error to our public Error.
+        /// Maps a UniFFI-generated RipgrepError to our public Error.
+        /// Case names (.InvalidPattern etc.) are PascalCase as emitted by UniFFI
+        /// for ripgrep_core 0.1.0. If UniFFI regenerates with different casing,
+        /// update this switch to match the enum in Sources/RipgrepKitFFI/RipgrepCore.swift.
         static func from(_ ffi: RipgrepError) -> Ripgrep.Error {
             switch ffi {
             case .InvalidPattern(let s): return .invalidPattern(s)
