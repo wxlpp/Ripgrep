@@ -147,7 +147,9 @@ Running `bash scripts/generate-bindings.sh` produces, under `Sources/RipgrepKitF
 
 15. **MINOR v0.1.0 polish (pre-existing, Task 20 area — NOT blocking):** `Ripgrep.Error.invalidPattern` renders as `"invalid regex: \(p)"` (Task 20), but the Rust-supplied `p` for a regex-compile failure already begins `"invalid regex: regex parse error: ..."`, so user-facing messages double-prefix: `ERROR: invalid regex: invalid regex: regex parse error...`. Cosmetic only; functional behavior correct. If polished pre-v0.1.0: either drop the `"invalid regex: "` prefix in `Error.message` for `.invalidPattern`, or strip it from the Rust error string. Surfaced, not reworked (Task 20 plan-verbatim, out of Task 31 scope).
 
-**NEXT: Task 32** (Full test suite green-light — run `cargo test -p ripgrep_core` + `swift test`, all green, commit `--allow-empty`). Per Task 31 report: already 48 swift + 33 rust green, 0 warnings — Task 32 should be a confirmation pass. Then Phase 6 (33-34). Task 35 release-time-only (no GitHub release). Tasks 36-38 deferred.
+**DONE — Task 32 (Full test suite green-light). ✅ PHASES 1-5 COMPLETE.** Checkpoint commit `1b37509`. Verification gate (controller-run, no implementation). Full suite GREEN: `cargo test -p ripgrep_core` 33; `cargo clippy --tests -D warnings` + `cargo fmt --check` clean; `swift build` 0 warnings; `swift test` 48 tests / 0 failures (clean `.build`). xcframework rebuilt & gitignored.
+
+**NEXT: Task 33** (Phase 6 — `scripts/package-release.sh`: build xcframework, `ditto` zip, sha256, `dist/`, add `dist/` to .gitignore). Then Task 34 (`.github/workflows/release.yml` — **apply Deviation #6: drop the broken `cargo install uniffi-bindgen` step; bindings come from `cargo run -p uniffi-bindgen`**). Task 35 (switch Package.swift to remote `binaryTarget(url:checksum:)`) is RELEASE-TIME-ONLY — no GitHub release exists, so it is **deferred-by-design**; the local `binaryTarget(path:)` stays for v0.1.0 dev. Tasks 36-38 deferred.
 
 ### ⚠️ Phase 3 critical watch-out (Task 18/19 — the integration linchpin)
 
