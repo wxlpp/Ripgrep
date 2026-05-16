@@ -42,7 +42,7 @@ Commits (oldest→newest): b509d0d, e18570a, b459f43, 191de86, 1daeb34, f4e82f6,
 
 **NEXT: Task 15** (Generate Swift bindings) through Task 35. Tasks 36-38 deferred (fuzz/README/symlink-loop). Task 35 is release-time-only (no GitHub release yet).
 
-**KNOWN FOUNDATION FLAKE (must fix before relying on `cargo test` gates):** `limits_tests::max_matches_truncates_and_flags` (`crates/ripgrep_core/src/lib.rs`) fails ~20-40% under parallel test execution. Pre-existing Phase 1 defect (NOT a Task 14 regression). Real cause: race in `max_matches` enforcement under the parallel walker — the mini fixture has 3 `TODO` matches across 3 files, so with `max_matches=Some(1)` parallel workers can overshoot `matches.len()` and/or `truncated` non-deterministically. Phase 1 closeout's "32 green" was a probabilistic pass. Being remediated separately before Task 15.
+**FOUNDATION FLAKE — RESOLVED (commit `057c9be`, 2026-05-16).** `limits_tests::max_matches_truncates_and_flags` flaked ~20-40% under parallel test execution (pre-existing Phase 1 defect, not a Task 14 regression). Root cause: off-by-one in `crates/ripgrep_core/src/search.rs` truncation detection — `if matches.len() > max` should be `>= max`. When the parallel walker stopped at exactly `max` matches, `truncated` was wrongly `false`. Fixed to `>= max`. Verified deterministic: 50× targeted + 30× full-suite (debugger) + 6× full-suite (controller), 0 failures. 33 tests stable.
 
 ## Plan Deviations Discovered (apply these going forward)
 
@@ -63,6 +63,8 @@ Commits (oldest→newest): b509d0d, e18570a, b459f43, 191de86, 1daeb34, f4e82f6,
    - **Task 15 must use `cargo run -p uniffi-bindgen -- generate ...`** (NOT bare `uniffi-bindgen`, NOT `cargo run -p ripgrep_core --bin ...`). **Task 34 must drop the `cargo install uniffi-bindgen` CI step** (the separate crate builds from source in the workspace).
    - clap is provably absent from `ripgrep_core` runtime closure (`cargo tree -p ripgrep_core -e normal -i clap` → not found).
    - Pre-flight env state (2026-05-16): all 5 Apple Rust targets installed; Xcode 26.4 present; Cargo.lock committed; sink.rs rustfmt fixup committed (242dffd).
+
+7. **PLAN ERRATA — `max_matches` truncation off-by-one (resolved in code, NOT in plan).** The plan at `docs/superpowers/plans/2026-05-15-ripgrep-swift-package.md` ~line 1229 (Task 10 region) shows `if matches.len() > max`. That is a bug — correct is `>= max` (collecting exactly `max` means the limit was hit, so `truncated` must be true). Fixed in `search.rs` at commit `057c9be`. If any future task re-applies that plan snippet verbatim, do NOT reintroduce `> max`. The plan code blocks are reference, not gospel — implementers should prefer the committed source.
 
 ## Phase 2 Watch-outs (Task 14+)
 
