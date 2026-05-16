@@ -16,7 +16,10 @@ let package = Package(
             name: "RipgrepCore",
             path: "Frameworks/RipgrepCore.xcframework"
         ),
-        .target(name: "RipgrepKitFFI", dependencies: ["RipgrepCore"]),
+        .target(name: "RipgrepKitFFI",
+                dependencies: ["RipgrepCore"],
+                exclude: ["RipgrepCoreFFI.h", "RipgrepCoreFFI.modulemap"],
+                swiftSettings: [.swiftLanguageMode(.v5)]),
         .target(name: "RipgrepKitCore", dependencies: ["RipgrepKitFFI"]),
         .target(name: "RipgrepKitTool", dependencies: [
             "RipgrepKitCore",
