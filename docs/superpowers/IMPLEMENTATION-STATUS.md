@@ -106,7 +106,17 @@ Running `bash scripts/generate-bindings.sh` produces, under `Sources/RipgrepKitF
 ### Task 30/31 decision point (record consciously before Task 31)
 - `Match` JSON uses synthesized camelCase keys (`lineNumber`, `beforeContext`...), NOT rg-style `line_number`. Current tool contract (`handleToolCall` returns raw String to the LLM) is LLM-opaque so camelCase is acceptable. IF Task 30/31 adds any code/consumer that parses the JSON as rg-JSON, add `CodingKeys` (snake_case) to `Match`. Decide explicitly at Task 31, don't discover post-merge.
 
-**NEXT: Task 23** (Ripgrep.search wiring — async/cancellation/FFI conversion; the Sendable boundary task). Tasks 36-38 deferred. Task 35 release-time-only.
+**DONE — Task 23 (Ripgrep.search wiring). ✅ PHASE 3 COMPLETE.** Commits `224c3a9` + `6b07b84`. Spec ✅ + code-quality ✅. `@preconcurrency import RipgrepKitFFI` (Options.swift + Search.swift) + `private struct CancelHandle: @unchecked Sendable { let token: CancelToken }` (sound: Rust token is atomic flag + immutable deadline). `Ripgrep.search` async with `withTaskCancellationHandler`+`Task.detached`; conversion inits qualify FFI types `RipgrepKitFFI.*`. Shared `Duration.ffiMilliseconds` helper. All FFI errors → `Ripgrep.Error` (catch-all → `.internalPanic`). 0 Swift6 warnings, 9 swift tests.
+
+### Task 26 (CancellationTests) carry-forwards
+- Cancellation NEVER throws `CancellationError` — it surfaces ONLY as `SearchResult.cancelled == true` (or empty matches). Task 26 should cancel the OUTER Swift `Task` (not call token.cancel() directly) and assert the return is a `SearchResult` with `.cancelled == true` (NOT a thrown error). Timeout path: `opts.timeout = .nanoseconds(1)` / pre-tripped → `r.cancelled || r.matches.isEmpty`.
+- Post-return `onCancel` race (cancel arrives after searchBlocking returns) is benign (atomic store no-op) — a test cancelling right after `await` resolves must not crash/hang.
+
+### Pre-v0.1.0 decision points (record; not blocking task flow)
+- **`Options.toFFI()` uses `precondition` on negative context/limits** (plan's M5). `Options` is a public `Codable` struct; negative values from decoded JSON (CLI path Tasks 28-30) would CRASH the host process. Decide before v0.1.0 ships: keep `precondition` (document "caller must pass validated Options") OR change to throwing `Ripgrep.Error.invalidArguments` (would make `toFFI` throws → ripples to `search()`; an API/spec change). Surfaced, not silently reworked mid-task.
+- **Cooperative-thread-pool occupancy:** `Task.detached` + blocking FFI occupies a pool thread per call. Documented via `/// - Important:` on `search()`. A dedicated-executor offload (`withCheckedContinuation` + dedicated queue) is a v0.2 item — fine for CLI/bounded v0.1.0 use.
+
+**NEXT: Task 24** (Swift test fixture mini-repo, Phase 4 — first end-to-end Swift search tests). Tasks 36-38 deferred. Task 35 release-time-only.
 
 ### ⚠️ Phase 3 critical watch-out (Task 18/19 — the integration linchpin)
 
