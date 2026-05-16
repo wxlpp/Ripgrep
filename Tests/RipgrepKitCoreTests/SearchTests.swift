@@ -81,4 +81,35 @@ final class SearchTests: XCTestCase {
             }
         }
     }
+
+    func testNegativeTimeoutThrowsInvalidArguments() async throws {
+        // Options.timeout is public Codable; a negative Duration such as
+        // .seconds(-1) previously produced UInt64(negative) = uncatchable host
+        // trap. ffiMilliseconds() now guards with >= .zero and throws instead.
+        // This test verifies the guard is reached: since a trap cannot be caught,
+        // reaching the catch branch proves the guard (not a crash) handled it.
+        var opts = Ripgrep.Options()
+        opts.timeout = .seconds(-1)
+        do {
+            _ = try await Ripgrep.search(pattern: "x", in: ["."], options: opts)
+            XCTFail("expected throw for negative timeout")
+        } catch let e as Ripgrep.Error {
+            guard case .invalidArguments = e else {
+                return XCTFail("wrong error type: \(e)")
+            }
+        }
+
+        // Non-regression: a small positive timeout must not throw invalidArguments.
+        // (The search may complete normally or cancel — neither is an error here.)
+        var validOpts = Ripgrep.Options()
+        validOpts.timeout = .milliseconds(50)
+        do {
+            _ = try await Ripgrep.search(pattern: "x", in: ["."], options: validOpts)
+        } catch let e as Ripgrep.Error {
+            if case .invalidArguments = e {
+                XCTFail("valid positive timeout must not throw invalidArguments")
+            }
+            // Other Ripgrep.Error variants (e.g. pathNotFound) are acceptable.
+        }
+    }
 }

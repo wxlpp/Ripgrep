@@ -3,9 +3,34 @@ import Foundation
 
 extension Duration {
     /// Whole milliseconds (floored), suitable for FFI `UInt64?` timeout fields.
-    var ffiMilliseconds: UInt64 {
+    ///
+    /// Throws `Ripgrep.Error.invalidArguments` for negative or overflow-producing
+    /// durations so that a public `Codable` `Options.timeout` never causes an
+    /// uncatchable host-process trap (same invariant as the `UInt32` range guards
+    /// in `toFFI`).
+    func ffiMilliseconds() throws(Ripgrep.Error) -> UInt64 {
+        guard self >= .zero else {
+            throw .invalidArguments(
+                message: "timeout must be non-negative, got \(self)")
+        }
         let c = components
-        return UInt64(c.seconds * 1000 + c.attoseconds / 1_000_000_000_000_000)
+        // Check `seconds * 1000` for Int64 overflow.
+        let (sMs, ov) = c.seconds.multipliedReportingOverflow(by: 1000)
+        guard !ov else {
+            throw .invalidArguments(
+                message: "timeout too large to represent in milliseconds, got \(self)")
+        }
+        // attoseconds is in [0, 999_999_999_999_999_999] for a normalised
+        // non-negative Duration, so this division is always non-negative and
+        // fits Int64; no overflow possible.
+        let attoMs = c.attoseconds / 1_000_000_000_000_000
+        let totalMs = sMs + attoMs
+        // totalMs >= 0 because both terms are non-negative for a non-negative Duration.
+        guard let result = UInt64(exactly: totalMs) else {
+            throw .invalidArguments(
+                message: "timeout too large to represent in milliseconds, got \(self)")
+        }
+        return result
     }
 }
 
