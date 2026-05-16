@@ -3,6 +3,7 @@ target/
 .swiftpm/
 DerivedData/
 Frameworks/RipgrepCore.xcframework/
+build/
 *.xcuserdata
 *.xcworkspace
 .DS_Store
