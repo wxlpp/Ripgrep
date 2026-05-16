@@ -9,16 +9,20 @@ private struct CancelHandle: @unchecked Sendable {
 }
 
 extension Ripgrep {
+    /// Runs a ripgrep search.
+    ///
+    /// - Important: Each call occupies one thread for the duration of the
+    ///   (blocking) native search. Avoid invoking this from a large number of
+    ///   concurrent tasks without external back-pressure; prefer serialising
+    ///   calls or bounding parallelism with a `TaskGroup`. A dedicated-executor
+    ///   offload is planned for a future release.
     public static func search(
         pattern: String,
         in paths: [String],
         options: Options = .init()
     ) async throws -> SearchResult {
         let request = options.toFFI(pattern: pattern, paths: paths)
-        let timeoutMs: UInt64? = options.timeout.flatMap {
-            let c = $0.components
-            return UInt64(c.seconds * 1000 + c.attoseconds / 1_000_000_000_000_000)
-        }
+        let timeoutMs: UInt64? = options.timeout?.ffiMilliseconds
         let handle = CancelHandle(token: CancelToken(timeoutMs: timeoutMs))
         return try await withTaskCancellationHandler {
             try await Task.detached(priority: .userInitiated) {
@@ -27,6 +31,8 @@ extension Ripgrep {
                     return SearchResult(from: ffi)
                 } catch let e as RipgrepError {
                     throw Ripgrep.Error.from(e)
+                } catch {
+                    throw Ripgrep.Error.internalPanic("Unexpected FFI error: \(error)")
                 }
             }.value
         } onCancel: {

@@ -1,6 +1,14 @@
 import Foundation
 @preconcurrency import RipgrepKitFFI
 
+extension Duration {
+    /// Whole milliseconds (floored), suitable for FFI `UInt64?` timeout fields.
+    var ffiMilliseconds: UInt64 {
+        let c = components
+        return UInt64(c.seconds * 1000 + c.attoseconds / 1_000_000_000_000_000)
+    }
+}
+
 extension Ripgrep {
     /// - Note: `Codable` uses synthesized coding keys. A future **non-optional**
     ///   field would break decoding of v0.1.0-encoded JSON (keyNotFound). Add
@@ -64,10 +72,7 @@ extension Ripgrep.Options {
         precondition((maxFiles ?? 0) >= 0, "maxFiles must be ≥ 0")
         precondition((maxFileSizeBytes ?? 0) >= 0, "maxFileSizeBytes must be ≥ 0")
 
-        let timeoutMs: UInt64? = timeout.flatMap {
-            let comp = $0.components
-            return UInt64(comp.seconds * 1000 + comp.attoseconds / 1_000_000_000_000_000)
-        }
+        let timeoutMs: UInt64? = timeout?.ffiMilliseconds
 
         return SearchRequest(
             pattern: pattern,
