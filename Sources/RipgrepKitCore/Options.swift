@@ -1,6 +1,10 @@
 import Foundation
 
 extension Ripgrep {
+    /// - Note: `Codable` uses synthesized coding keys. A future **non-optional**
+    ///   field would break decoding of v0.1.0-encoded JSON (keyNotFound). Add
+    ///   such fields as optional, or provide a custom `init(from:)` using
+    ///   `decodeIfPresent` with a default, to preserve backward compatibility.
     public struct Options: Codable, Sendable {
         public var caseInsensitive: Bool
         public var smartCase: Bool
