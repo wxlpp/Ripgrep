@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "RipgrepKit",
-    platforms: [.iOS(.v15), .macOS(.v12)],
+    platforms: [.iOS(.v16), .macOS(.v13)],
     products: [
         .library(name: "RipgrepKitCore", targets: ["RipgrepKitCore"]),
         .library(name: "RipgrepKitTool", targets: ["RipgrepKitTool"]),
