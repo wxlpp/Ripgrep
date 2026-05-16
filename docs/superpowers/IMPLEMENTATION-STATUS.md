@@ -116,7 +116,11 @@ Running `bash scripts/generate-bindings.sh` produces, under `Sources/RipgrepKitF
 - **`Options.toFFI()` uses `precondition` on negative context/limits** (plan's M5). `Options` is a public `Codable` struct; negative values from decoded JSON (CLI path Tasks 28-30) would CRASH the host process. Decide before v0.1.0 ships: keep `precondition` (document "caller must pass validated Options") OR change to throwing `Ripgrep.Error.invalidArguments` (would make `toFFI` throws → ripples to `search()`; an API/spec change). Surfaced, not silently reworked mid-task.
 - **Cooperative-thread-pool occupancy:** `Task.detached` + blocking FFI occupies a pool thread per call. Documented via `/// - Important:` on `search()`. A dedicated-executor offload (`withCheckedContinuation` + dedicated queue) is a v0.2 item — fine for CLI/bounded v0.1.0 use.
 
-**NEXT: Task 24** (Swift test fixture mini-repo, Phase 4 — first end-to-end Swift search tests). Tasks 36-38 deferred. Task 35 release-time-only.
+**DONE — Task 24 (Swift test fixture mini-repo).** Commit `53b1232`. Spec ✅ (`git archive HEAD` proves all 7 files incl. gitignore-trap files committed/CI-safe) + controller code-quality ✅. byte-identical to Rust fixture at `Tests/RipgrepKitCoreTests/Fixtures/mini/`. Trap files (`ignored.txt`, `target/built.txt`) force-added past the fixture's own `.gitignore`.
+
+- **Task 25 watch-out:** plan's `fixturePath()` uses `Bundle.module.url(forResource: "mini", withExtension: nil)`. `resources:[.copy("Fixtures")]` preserves dir structure, so `mini` is at `Fixtures/mini` in the bundle — `forResource:"mini"` may return nil (→ force-unwrap crash). If so, use `Bundle.module.url(forResource: "mini", withExtension: nil, subdirectory: "Fixtures")`. Adapt the helper empirically; the 5 tests must genuinely pass (not crash on nil).
+
+**NEXT: Task 25** (SearchTests — first end-to-end Swift search). Tasks 36-38 deferred. Task 35 release-time-only.
 
 ### ⚠️ Phase 3 critical watch-out (Task 18/19 — the integration linchpin)
 
