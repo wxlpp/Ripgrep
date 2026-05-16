@@ -93,6 +93,12 @@ impl<M: Matcher> Sink for ChannelSink<M> {
 
     fn matched(&mut self, _: &Searcher, m: &SinkMatch<'_>) -> Result<bool, Self::Error> {
         if self.poll_cancel() {
+            // Cancel: return Ok(false) — grep_searcher stops this file's search
+            // IMMEDIATELY and STILL calls finish(), so flush_pending() runs and
+            // already-collected matches are preserved. Do NOT change to Err(SinkAbort):
+            // it stops just as immediately but SKIPS finish() (losing pending matches)
+            // for zero latency gain. Cancel-poll cadence (CANCEL_CHECK_EVERY) is the
+            // actual latency lever (see v0.2-P6).
             return Ok(false);
         }
 
@@ -135,6 +141,9 @@ impl<M: Matcher> Sink for ChannelSink<M> {
 
     fn context(&mut self, _: &Searcher, ctx: &SinkContext<'_>) -> Result<bool, Self::Error> {
         if self.poll_cancel() {
+            // Same contract as matched(): Ok(false) stops immediately, finish()
+            // still runs → flush_pending() preserves collected matches. See comment
+            // in matched() above for full rationale. Do NOT change to Err(SinkAbort).
             return Ok(false);
         }
         let line = String::from_utf8_lossy(ctx.bytes())
