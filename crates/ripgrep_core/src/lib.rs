@@ -2,6 +2,8 @@
 //!
 //! Public surface is generated via UniFFI; see `lib.rs` `uniffi::setup_scaffolding!()`.
 
+uniffi::setup_scaffolding!();
+
 mod error;
 mod options;
 
@@ -58,6 +60,14 @@ mod cancel;
 mod sink;
 
 mod search;
+
+#[uniffi::export]
+pub fn search_blocking(
+    request: crate::options::SearchRequest,
+    cancel: std::sync::Arc<crate::cancel::CancelToken>,
+) -> Result<crate::options::SearchResult, crate::error::RipgrepError> {
+    crate::search::search_blocking(request, cancel)
+}
 
 #[cfg(test)]
 mod search_matcher_tests {
@@ -145,7 +155,7 @@ mod sink_tests {
         let mut sink = ChannelSink::new(
             "/tmp/test.txt".into(),
             tx,
-            Arc::new(crate::cancel::CancelToken::new(None)),
+            crate::cancel::CancelToken::new(None),
             Arc::clone(&counter),
             m.clone(),
             0,
@@ -178,7 +188,7 @@ mod cancel_tests {
 
     #[test]
     fn explicit_cancel_trips_token() {
-        let t = Arc::new(CancelToken::new(None));
+        let t = CancelToken::new(None);
         let t2 = Arc::clone(&t);
         thread::spawn(move || t2.cancel());
         thread::sleep(Duration::from_millis(20));
@@ -306,7 +316,6 @@ mod search_e2e_tests {
     use super::cancel::CancelToken;
     use super::options::SearchRequest;
     use super::search::search_blocking;
-    use std::sync::Arc;
 
     pub(super) fn req(pattern: &str) -> SearchRequest {
         SearchRequest {
@@ -331,7 +340,7 @@ mod search_e2e_tests {
 
     #[test]
     fn finds_matches_in_fixture() {
-        let r = search_blocking(req("TODO"), Arc::new(CancelToken::new(None))).unwrap();
+        let r = search_blocking(req("TODO"), CancelToken::new(None)).unwrap();
         let texts: Vec<_> = r.matches.iter().map(|m| m.line.as_str()).collect();
         assert!(texts.iter().any(|l| l.contains("search me TODO")));
         assert!(texts.iter().any(|l| l.contains("// TODO: handle case")));
@@ -340,7 +349,7 @@ mod search_e2e_tests {
 
     #[test]
     fn results_sorted_deterministically() {
-        let r = search_blocking(req("TODO"), Arc::new(CancelToken::new(None))).unwrap();
+        let r = search_blocking(req("TODO"), CancelToken::new(None)).unwrap();
         let mut prev: Option<(&str, u64)> = None;
         for m in &r.matches {
             let key = (m.path.as_str(), m.line_number);
@@ -353,7 +362,7 @@ mod search_e2e_tests {
 
     #[test]
     fn empty_result_when_no_match() {
-        let r = search_blocking(req("ZZZZ_NOPE"), Arc::new(CancelToken::new(None))).unwrap();
+        let r = search_blocking(req("ZZZZ_NOPE"), CancelToken::new(None)).unwrap();
         assert_eq!(r.matches.len(), 0);
         assert!(!r.truncated);
         assert!(!r.cancelled);
@@ -364,7 +373,6 @@ mod search_e2e_tests {
 mod context_tests {
     use super::cancel::CancelToken;
     use super::search::search_blocking;
-    use std::sync::Arc;
 
     fn req() -> super::options::SearchRequest {
         let mut r = super::search_e2e_tests::req("match");
@@ -376,7 +384,7 @@ mod context_tests {
     fn before_context_captures_prior_lines() {
         let mut r = req();
         r.before_context = 1;
-        let res = search_blocking(r, Arc::new(CancelToken::new(None))).unwrap();
+        let res = search_blocking(r, CancelToken::new(None)).unwrap();
         let m = &res.matches[0];
         assert_eq!(m.before_context, vec!["line 2".to_string()]);
     }
@@ -385,7 +393,7 @@ mod context_tests {
     fn after_context_captures_following_lines() {
         let mut r = req();
         r.after_context = 1;
-        let res = search_blocking(r, Arc::new(CancelToken::new(None))).unwrap();
+        let res = search_blocking(r, CancelToken::new(None)).unwrap();
         let m = &res.matches[0];
         assert_eq!(m.after_context, vec!["line 4".to_string()]);
     }
@@ -395,7 +403,7 @@ mod context_tests {
         let mut r = req();
         r.pattern = r"match[\s\S]*match".into();
         r.multiline = true;
-        let res = search_blocking(r, Arc::new(CancelToken::new(None))).unwrap();
+        let res = search_blocking(r, CancelToken::new(None)).unwrap();
         assert!(!res.matches.is_empty());
     }
 }
@@ -404,7 +412,6 @@ mod context_tests {
 mod limits_tests {
     use super::cancel::CancelToken;
     use super::search::search_blocking;
-    use std::sync::Arc;
 
     fn req(pattern: &str) -> super::options::SearchRequest {
         let mut r = super::search_e2e_tests::req(pattern);
@@ -417,7 +424,7 @@ mod limits_tests {
     fn max_matches_truncates_and_flags() {
         let mut r = req("TODO");
         r.max_matches = Some(1);
-        let res = search_blocking(r, Arc::new(CancelToken::new(None))).unwrap();
+        let res = search_blocking(r, CancelToken::new(None)).unwrap();
         assert_eq!(res.matches.len(), 1);
         assert!(res.truncated);
     }
@@ -426,7 +433,7 @@ mod limits_tests {
     fn max_files_caps_files_searched() {
         let mut r = req("TODO");
         r.max_files = Some(1);
-        let res = search_blocking(r, Arc::new(CancelToken::new(None))).unwrap();
+        let res = search_blocking(r, CancelToken::new(None)).unwrap();
         assert!(res.files_searched <= 1, "got {}", res.files_searched);
     }
 
@@ -438,7 +445,7 @@ mod limits_tests {
                                 // even on tiny dirs.
         let res = search_blocking(
             r,
-            Arc::new(CancelToken::new(Some(0))), // pre-tripped
+            CancelToken::new(Some(0)), // pre-tripped
         )
         .unwrap();
         assert!(res.cancelled);
@@ -469,7 +476,7 @@ mod external_cancel_tests {
 
     #[test]
     fn external_cancel_stops_search_promptly() {
-        let cancel = Arc::new(CancelToken::new(None));
+        let cancel = CancelToken::new(None);
         let cancel_for_thread = Arc::clone(&cancel);
 
         thread::spawn(move || {

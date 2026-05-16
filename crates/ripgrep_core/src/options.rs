@@ -1,4 +1,4 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct SearchRequest {
     pub pattern: String,
     pub paths: Vec<String>,
@@ -18,13 +18,13 @@ pub struct SearchRequest {
     pub timeout_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct Submatch {
     pub start: u32,
     pub end: u32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct SearchMatch {
     pub path: String,
     pub line_number: u64,
@@ -34,12 +34,11 @@ pub struct SearchMatch {
     pub submatches: Vec<Submatch>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, uniffi::Record)]
 pub struct SearchResult {
     pub matches: Vec<SearchMatch>,
     pub truncated: bool,
     pub cancelled: bool,
     pub files_searched: u64,
-    #[allow(dead_code)]
     pub elapsed_ms: u64, // Exported to Swift via UniFFI
 }

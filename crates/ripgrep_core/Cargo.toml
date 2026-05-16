@@ -18,7 +18,7 @@ globset = "0.4.15"
 crossbeam-channel = "0.5.13"
 thiserror = "2.0"
 once_cell = "1.20"
-uniffi = { version = "0.28", features = ["build"] }
+uniffi = { version = "0.28", features = ["build", "cli"] }
 
 [build-dependencies]
 uniffi = { version = "0.28", features = ["build"] }
