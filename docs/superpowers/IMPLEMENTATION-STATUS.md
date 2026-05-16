@@ -55,7 +55,18 @@ Running `bash scripts/generate-bindings.sh` produces, under `Sources/RipgrepKitF
 
 **DONE — Task 17 (5 Apple targets, 3-slice XCFramework). ✅ PHASE 2 COMPLETE.** Commits `62a7fa4` + `f122a59`. Spec ✅ + code-quality ✅. `bash scripts/build-xcframework.sh` produces `Frameworks/RipgrepCore.xcframework` (gitignored) with 3 slices: `macos-arm64_x86_64`, `ios-arm64` (device, no variant), `ios-arm64_x86_64-simulator` (variant=simulator). Each slice's framework = `RipgrepCoreFFI.framework`, binary = static `ar archive`. `build/` fully purged each run (`rm -rf build "$OUT"`).
 
-**NEXT: Task 18** (Package.swift, Phase 3) through Task 35. Tasks 36-38 deferred. Task 35 release-time-only.
+**DONE — Task 18 (Package.swift + local binaryTarget).** Commit `830b8d1`. Spec ✅ + code-quality ✅ (manifest verbatim per plan). swift-argument-parser pinned **1.7.1**; `swift package resolve` works with no source dirs (Task 19 ordering safe). Plus build-script correctness follow-up `7629dcc` (below).
+
+**DONE — build-script min-OS fix (`7629dcc`).** Code-quality review found the cargo-built static libs embedded `LC_VERSION_MIN macOS 10.12 / iOS 10.0`, contradicting Package.swift's `.macOS(.v12)/.iOS(.v15)`. `scripts/build-xcframework.sh` now `export`s `MACOSX_DEPLOYMENT_TARGET=12.0` / `IPHONEOS_DEPLOYMENT_TARGET=15.0`. Verified on clean build: macOS `minos 12.0`, iOS device/sim `minos 15.0`.
+
+10. **CARGO cache caveat for the min-OS stamp (`*_DEPLOYMENT_TARGET` not fingerprinted by cargo).** The min-OS env vars only take effect on a **clean** cargo compile — cargo does NOT invalidate cached `.rlib`/`.o` when `MACOSX/IPHONEOS_DEPLOYMENT_TARGET` change (known cargo limitation). The script's `rm -rf build "$OUT"` does NOT purge `${CARGO_TARGET_DIR}/<triple>/release`. Impact: the **release path is correct** (Task 33/34 CI runs on a fresh macos-14 runner → clean build → correct minos). **Local/manual releases must start from a clean cargo state** (`cargo clean -p ripgrep_core` or fresh checkout) or the shipped binary may carry the old low floor. NOT auto-forced in the script (full 5-target clean rebuild every local run is too costly for v0.1.0 DX); documented limitation. Re-verify minos via `otool -l <slice-binary> | grep minos` before any manual release.
+
+### Task 19 carry-forwards (from Task 18 review)
+- Task 19 plan Step 1 ALREADY creates `Tests/RipgrepKitCoreTests/Fixtures/.gitkeep` + `Tests/RipgrepKitToolTests/Fixtures/.gitkeep`. This is REQUIRED — without it `swift build` hard-errors on `resources: [.copy("Fixtures")]`. Ensure the Task 19 implementer does that step.
+- Task 19 is the FIRST `swift build`/`swift test`. The xcframework must exist locally first (`bash scripts/build-xcframework.sh`). Deviation #9 module-collision watch-out becomes concrete here — resolve empirically.
+- Nice-to-have (not blocking): add a one-line "run scripts/build-xcframework.sh before swift build" note to `README.md` (full README is deferred Task 37).
+
+**NEXT: Task 19** (stub Swift targets + first `swift build`). Tasks 36-38 deferred. Task 35 release-time-only.
 
 ### ⚠️ Phase 3 critical watch-out (Task 18/19 — the integration linchpin)
 
