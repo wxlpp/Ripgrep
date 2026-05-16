@@ -70,8 +70,9 @@ fn search_blocking_inner(
     // < max check before peers' fetch_add is observed) is an inherent
     // check-then-act race that Acquire/Release does NOT serialize; result
     // correctness under overshoot is guaranteed by the post-truncation below
-    // (Errata #7). Do NOT "upgrade" these to Acquire/Release — it changes
-    // nothing here.
+    // (>= max, not >: collecting exactly max means the limit was hit, so
+    // truncate + flag truncated; also clamps parallel-walker overshoot).
+    // Do NOT "upgrade" these to Acquire/Release — it changes nothing here.
     let match_counter = Arc::new(AtomicUsize::new(0));
     let file_counter = Arc::new(AtomicUsize::new(0));
 

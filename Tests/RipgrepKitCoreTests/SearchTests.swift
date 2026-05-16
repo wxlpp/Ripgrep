@@ -54,4 +54,31 @@ final class SearchTests: XCTestCase {
             }
         }
     }
+
+    func testOverUInt32MaxOptionsThrowsInvalidArguments() async throws {
+        // Options is public Codable; a hand-constructed or JSON-decoded value
+        // with a field exceeding UInt32.max must throw Ripgrep.Error.invalidArguments
+        // rather than trap the host process via UInt32.init(_:) on a 64-bit Int.
+        // Without the (0...Int(UInt32.max)) range guard, UInt32(5_000_000_000)
+        // traps unconditionally at runtime — traps cannot be caught, so this test
+        // would crash the test runner. The guard is what prevents the crash.
+        let overMax: Int = 5_000_000_000  // > UInt32.max (4_294_967_295)
+
+        for makeOpts: () -> Ripgrep.Options in [
+            { var o = Ripgrep.Options(); o.maxMatches = overMax; return o },
+            { var o = Ripgrep.Options(); o.maxFiles = overMax; return o },
+            { var o = Ripgrep.Options(); o.beforeContext = overMax; return o },
+            { var o = Ripgrep.Options(); o.afterContext = overMax; return o },
+        ] {
+            let opts = makeOpts()
+            do {
+                _ = try await Ripgrep.search(pattern: "x", in: ["."], options: opts)
+                XCTFail("expected throw for over-UInt32.max field")
+            } catch let e as Ripgrep.Error {
+                guard case .invalidArguments = e else {
+                    return XCTFail("wrong error type: \(e)")
+                }
+            }
+        }
+    }
 }
