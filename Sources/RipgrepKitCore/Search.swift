@@ -21,7 +21,7 @@ extension Ripgrep {
         in paths: [String],
         options: Options = .init()
     ) async throws -> SearchResult {
-        let request = options.toFFI(pattern: pattern, paths: paths)
+        let request = try options.toFFI(pattern: pattern, paths: paths)
         let timeoutMs: UInt64? = options.timeout?.ffiMilliseconds
         let handle = CancelHandle(token: CancelToken(timeoutMs: timeoutMs))
         return try await withTaskCancellationHandler {

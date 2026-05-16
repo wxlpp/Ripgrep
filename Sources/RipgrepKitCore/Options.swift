@@ -65,12 +65,25 @@ extension Ripgrep {
 }
 
 extension Ripgrep.Options {
-    func toFFI(pattern: String, paths: [String]) -> SearchRequest {
-        precondition(beforeContext >= 0, "beforeContext must be ≥ 0")
-        precondition(afterContext >= 0, "afterContext must be ≥ 0")
-        precondition((maxMatches ?? 0) >= 0, "maxMatches must be ≥ 0")
-        precondition((maxFiles ?? 0) >= 0, "maxFiles must be ≥ 0")
-        precondition((maxFileSizeBytes ?? 0) >= 0, "maxFileSizeBytes must be ≥ 0")
+    // Throws (not `precondition`) on out-of-range fields: `Options` is a public
+    // `Codable` value, so a JSON-decoded / hand-constructed instance with a
+    // negative field must be a recoverable error, not a host-process trap.
+    func toFFI(pattern: String, paths: [String]) throws(Ripgrep.Error) -> SearchRequest {
+        guard beforeContext >= 0 else {
+            throw .invalidArguments(message: "beforeContext must be ≥ 0, got \(beforeContext)")
+        }
+        guard afterContext >= 0 else {
+            throw .invalidArguments(message: "afterContext must be ≥ 0, got \(afterContext)")
+        }
+        guard (maxMatches ?? 0) >= 0 else {
+            throw .invalidArguments(message: "maxMatches must be ≥ 0, got \(maxMatches!)")
+        }
+        guard (maxFiles ?? 0) >= 0 else {
+            throw .invalidArguments(message: "maxFiles must be ≥ 0, got \(maxFiles!)")
+        }
+        guard (maxFileSizeBytes ?? 0) >= 0 else {
+            throw .invalidArguments(message: "maxFileSizeBytes must be ≥ 0, got \(maxFileSizeBytes!)")
+        }
 
         let timeoutMs: UInt64? = timeout?.ffiMilliseconds
 

@@ -38,4 +38,20 @@ final class SearchTests: XCTestCase {
             if case .invalidPattern = e { } else { XCTFail("wrong error: \(e)") }
         }
     }
+
+    func testNegativeOptionsThrowsInvalidArguments() async throws {
+        // A public Codable Options with a negative field must surface as a
+        // recoverable Ripgrep.Error, NOT trap the host process (toFFI throws
+        // synchronously before any FFI/walk, so no fixture is needed).
+        var opts = Ripgrep.Options()
+        opts.beforeContext = -1
+        do {
+            _ = try await Ripgrep.search(pattern: "x", in: ["."], options: opts)
+            XCTFail("expected throw for negative beforeContext")
+        } catch let e as Ripgrep.Error {
+            guard case .invalidArguments = e else {
+                return XCTFail("wrong error: \(e)")
+            }
+        }
+    }
 }
