@@ -61,12 +61,17 @@ mod sink;
 
 mod search;
 
+use cancel::CancelToken;
+use error::RipgrepError;
+use options::{SearchRequest, SearchResult};
+use std::sync::Arc;
+
 #[uniffi::export]
 pub fn search_blocking(
-    request: crate::options::SearchRequest,
-    cancel: std::sync::Arc<crate::cancel::CancelToken>,
-) -> Result<crate::options::SearchResult, crate::error::RipgrepError> {
-    crate::search::search_blocking(request, cancel)
+    request: SearchRequest,
+    cancel: Arc<CancelToken>,
+) -> Result<SearchResult, RipgrepError> {
+    search::search_blocking(request, cancel)
 }
 
 #[cfg(test)]
@@ -366,6 +371,21 @@ mod search_e2e_tests {
         assert_eq!(r.matches.len(), 0);
         assert!(!r.truncated);
         assert!(!r.cancelled);
+    }
+}
+
+#[cfg(test)]
+mod ffi_export_smoke {
+    use super::cancel::CancelToken;
+
+    #[test]
+    fn ffi_search_blocking_returns_ok_with_matches() {
+        let r = super::search_e2e_tests::req("TODO");
+        let res = crate::search_blocking(r, CancelToken::new(None)).unwrap();
+        assert!(
+            !res.matches.is_empty(),
+            "expected at least one TODO match in fixture"
+        );
     }
 }
 
