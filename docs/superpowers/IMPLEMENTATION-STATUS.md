@@ -21,7 +21,10 @@ In a new session, from `/Users/evan/Repositories/Ripgrep`:
 > **v0.2 BACKLOG EXECUTION (branch `v0.2-backlog`, off merged-main `2ebec38`; PR #1 merged 2026-05-16).** Baseline green (cargo 33 / swift 48). Items P1–P7 in impact-priority order:
 > - **P1 ✅ DONE** (`f5c0dea`,`6c01bda`) — per-match `after_context` window attribution in `ChannelSink` (root cause of the documented `formattedAsText` overlap limitation, now fixed at the data layer). +`saturating_add`, explicit `sb.line_number(true)`, +adjacent-matches fixture/test. cargo 34, swift 48.
 > - **P2 ✅ DONE — REFUTED + HARDENED** (`96382ed`) — ccd premise was WRONG (verified vs grep-searcher 0.1.16 `Sink` docs): `Ok(false)` already stops the file immediately AND `finish()` still flushes pending matches; `Err(SinkAbort)` would skip `finish` (lose partial results) for zero latency gain. **No behavior change.** Added contract comments + 2 non-vacuous regression tests. Cancel-latency concern correctly folds into **P6** (`CANCEL_CHECK_EVERY`), not P2. cargo 36, swift 48.
-> - **P3..P7** pending (Relaxed→Acquire/Release; timeout_ms dead field; rename misnamed test; CANCEL_CHECK_EVERY/u32 [now also absorbs P2's latency lever]; extract lib.rs test modules).
+> - **P3 ✅ DONE — REFUTED + DOCUMENTED** (`5dbc7e8`) — ccd premise unsound (atomics model): Acquire/Release does NOT serialize the check-then-act overshoot; these counters publish no data (matches flow via crossbeam channel); single-location coherence already gives `Relaxed` prompt visibility; Errata #7 post-truncation guarantees result-correctness. **No behavior change** (comment-only, 0 `Ordering::` changes). cargo 36, swift 48.
+> - **P4..P7** pending (timeout_ms dead FFI field; rename misnamed test + Rust e2e; CANCEL_CHECK_EVERY/u32 [absorbs P2's latency lever]; extract lib.rs test modules).
+>
+> Note: P2 & P3 were ccd suggestions that proper verification refuted — neither was a real defect; both converted to durable documentation/hardening with no behavior change. P1 was the one genuine correctness fix so far.
 >
 > **STATUS 2026-05-16: Tasks 14–34 ALL DONE (spec ✅ + code-quality ✅, two-stage reviewed). Task 35 deferred-by-design (release-time). Tasks 36–38 deferred. Full suite green: Rust 33 tests, Swift 48 tests, clippy/fmt clean, 0 Swift-6 warnings. 15 plan deviations + Errata #7/#13 recorded below.**
 >
