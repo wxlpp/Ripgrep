@@ -131,7 +131,9 @@ Running `bash scripts/generate-bindings.sh` produces, under `Sources/RipgrepKitF
 
 14. **Package.swift: `RipgrepKitToolTests` deps now `["RipgrepKitTool", "RipgrepKitCore"]`** (added RipgrepKitCore). Reason: Task 27/29/30/31 tests use `@testable import RipgrepKitCore`; `@testable` needs a DIRECT test-target dependency (local SwiftPM tolerated the omission; stricter CI/toolchains reject it). Already fixed in `64b408d` — Tasks 29/30/31 inherit the correct declaration, no re-fix needed.
 
-**NEXT: Task 28** (RipgrepArgs ParsableCommand). Task 28 plan: `RipgrepArgs.swift` imports ONLY `ArgumentParser` (NOT RipgrepKitCore — it's an internal parsing struct). Tasks 36-38 deferred. Task 35 release-time-only.
+**DONE — Task 28 (RipgrepArgs).** Commit `d9780f5`. Spec ✅ (byte-verbatim, behavior-probed flag wiring) + controller code-quality ✅. Internal `RipgrepArgs: ParsableCommand`, ArgumentParser-only. 32 swift tests.
+
+**NEXT: Task 29** (Parse → ParsedInvocation — Tokenizer+RipgrepArgs merge logic: -C/-A/-B precedence, glob `!`-split into include/exclude, max-filesize K/M/G parser, ArgumentParser-error→`Ripgrep.Error.invalidArguments` mapping via `RipgrepArgs.fullMessage(for:)`). Plan's Parse.swift `import ArgumentParser` + `import RipgrepKitCore`. RISK: plan calls `RipgrepArgs.fullMessage(for: error)` — verify that API exists in swift-argument-parser 1.7.1 (it does: `ParsableCommand.fullMessage(for:)`); if signature differs, adapt minimally. Tasks 36-38 deferred. Task 35 release-time-only.
 
 ### ⚠️ Phase 3 critical watch-out (Task 18/19 — the integration linchpin)
 
