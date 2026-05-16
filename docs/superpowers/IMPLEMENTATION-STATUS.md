@@ -209,6 +209,24 @@ Running `bash scripts/generate-bindings.sh` produces, under `Sources/RipgrepKitF
     ```
     (Raw-string input chars `'func\s+\w+' x` → algorithm yields `["func\s+\w+", "x"]`; this is the exact regex-preservation behavior the tool exists for.) Implementer escalated correctly (NEEDS_CONTEXT); controller decided. Other 7 Task-27 tests are consistent with the plan algorithm and unchanged.
 
+## External adversarial review (ccd / DeepSeek) — findings & disposition (2026-05-16, pre-PR)
+
+Run at the finishing-a-development-branch checkpoint (user CLAUDE.md gate; `/codex:adversarial-review` unavailable → used the available `ccd-review`). Reviewed the 34 hand-written Phase 2-6 source files. **Verdict: Critical = none.** Dispositions (per `superpowers:receiving-code-review`):
+
+- **FIXED (in-scope Phase 3):** Nit — stale `// Filled in later tasks.` comment in `Sources/RipgrepKitCore/Ripgrep.swift` replaced with a proper namespace-enum doc comment (the comment was factually wrong post-completion).
+- **SECURITY NOTE (v0.1.0 — document in README/Task 37):** user-supplied regex is passed straight to `grep-regex`; a malicious pattern (e.g. `(a+)+b`) can cause catastrophic backtracking. The ONLY mitigation is the `timeout`/`CancelToken`. **Consumers handling untrusted input (esp. the LLM-tool path) MUST set `Options.timeout`.** No code defect (inherent to regex search); must be documented prominently. Path-traversal: none (ignore::WalkBuilder, no symlink follow). Command-injection: none (Tokenizer is in-process, no shell).
+- **DISAGREE (no change, reasoning recorded):** ccd flagged `search_blocking` as "duplicated" in `lib.rs` (`#[uniffi::export]`) vs `search.rs` (impl). This is a *deliberate* Task 14 design — a 1-line thin re-export wrapper (no logic duplication) keeping the FFI signature concern out of the core impl; explicitly validated by Task 14's spec + code-quality reviews. Keeping as-is.
+- **v0.2 BACKLOG (pre-existing Phase 1 code, OUT of Phase 2-6 PR scope; correct observations, NOT v0.1.0 blockers):**
+  1. `sink.rs` context-group merge: adjacent same-file matches' `after_context` all attribute to the last match (extends the already-documented `formattedAsText` overlap limitation — root cause is in `sink.rs`, not just the Swift formatter). v0.2: per-match after-line collection.
+  2. `sink.rs` cancel returns `Ok(false)` (skip line) not `Err(SinkAbort)`; large single-file cancel latency bounded only by walker file-boundary checks + `CANCEL_CHECK_EVERY=100`. v0.2: flush + `SinkAbort` on cancel.
+  3. `SearchRequest.timeout_ms` is carried over FFI but unread in Rust `search_blocking` (timeout is intentionally CancelToken-driven; Swift `Options.toFFI` sets it, `Ripgrep.search` builds the `CancelToken`). This is the documented dual-timeout design — sharpened here: the Rust-side field is intentionally inert; v0.2 may drop it or comment it in `options.rs`.
+  4. `search.rs` match/file counters use `Ordering::Relaxed` → parallel overshoot (wasted work only; RESULT correctness is guaranteed by Errata #7's `>= max` post-truncation, verified deterministic 86×). v0.2: Acquire/Release.
+  5. Rust test `timeout_marks_result_cancelled` is misnamed (uses pre-expired `CancelToken::new(Some(0))`, not `timeout_ms`). The real timeout→CancelToken e2e path IS covered by Task 26 Swift `CancellationTests`. v0.2: rename + add a Rust-side e2e.
+  6. `CANCEL_CHECK_EVERY=100` may be coarse for pathological single-line giant files; `Submatch.start/end` are `u32` (theoretical >4GB-line truncation — unrealistic). v0.2 notes only.
+  7. `lib.rs` flattens many `#[cfg(test)] mod`s in one file — v0.2 cosmetic (extract to test files).
+
+None of the v0.2 items is a correctness defect for the v0.1.0 dev-form milestone (truncation correctness proven; cancellation e2e covered at the Swift layer; security mitigation exists via timeout and is now documented). They are pre-existing Phase-1 characteristics, not regressions from Phases 2-6.
+
 ## Phase 2 Watch-outs (Task 14+)
 
 - Task 14 adds `uniffi::setup_scaffolding!()`, `#[derive(uniffi::Record)]`, `#[derive(uniffi::Object)]` on CancelToken, `#[uniffi::export]` on a `search_blocking` wrapper. The CancelToken constructor changes to return `Arc<Self>` for UniFFI — adjust all Rust call sites (tests construct `CancelToken::new(None)`; if it becomes `Arc`, tests need `Arc`-aware updates).
