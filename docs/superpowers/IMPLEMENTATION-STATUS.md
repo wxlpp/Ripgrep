@@ -133,7 +133,13 @@ Running `bash scripts/generate-bindings.sh` produces, under `Sources/RipgrepKitF
 
 **DONE — Task 28 (RipgrepArgs).** Commit `d9780f5`. Spec ✅ (byte-verbatim, behavior-probed flag wiring) + controller code-quality ✅. Internal `RipgrepArgs: ParsableCommand`, ArgumentParser-only. 32 swift tests.
 
-**NEXT: Task 29** (Parse → ParsedInvocation — Tokenizer+RipgrepArgs merge logic: -C/-A/-B precedence, glob `!`-split into include/exclude, max-filesize K/M/G parser, ArgumentParser-error→`Ripgrep.Error.invalidArguments` mapping via `RipgrepArgs.fullMessage(for:)`). Plan's Parse.swift `import ArgumentParser` + `import RipgrepKitCore`. RISK: plan calls `RipgrepArgs.fullMessage(for: error)` — verify that API exists in swift-argument-parser 1.7.1 (it does: `ParsableCommand.fullMessage(for:)`); if signature differs, adapt minimally. Tasks 36-38 deferred. Task 35 release-time-only.
+**DONE — Task 29 (Parse → ParsedInvocation).** Commits `cac5b25` + `aa69f5f`. Spec ✅ + code-quality ✅. `parseFilesize` negative-guarded. 42 swift tests.
+
+### Pre-v0.1.0 known limitations / Task 31 carry-forward (from Task 29 review)
+- **`-A 0`/`-B 0` rg-fidelity gap:** `RipgrepArgs.afterContext/beforeContext` default `Int = 0`, so explicit `-A 0` is indistinguishable from unset → `rg -C 3 -A 0` yields after=3 (rg gives 0). Proper fix = `Int?` in RipgrepArgs + merge rework (touches plan-dictated Task 28 code + Task 29 merge). Recorded as a known v0.1.0 subset limitation (spec §2 already frames the tool as an rg subset); decide before v0.1.0 ships whether to fix. NOT reworked mid-flow (plan-dictated).
+- **Task 31 carry-forward — `--help`/`--version` → `.invalidArguments`:** ArgumentParser throws `CleanExit.helpRequest/versionRequest` for `--help`/`--version`; Parse.swift's catch-all maps these to `Ripgrep.Error.invalidArguments(message: <help text>)`. For the LLM tool (Task 31 `handleToolCall`), an LLM passing `--help` gets a help dump as an "ERROR:". Task 31 must decide: catch `CleanExit` separately (return schema/clean response) OR document in `toolSchema` that `--help`/`--version` aren't valid tool inputs. Surface explicitly at Task 31.
+
+**NEXT: Task 30** (Run convenience methods — `Ripgrep.run(String)`/`run([String])` = parse then search then format). Plan also copies the fixture: `cp -R Tests/RipgrepKitCoreTests/Fixtures/mini Tests/RipgrepKitToolTests/Fixtures/` — SAME gitignore trap as Task 24 (`git add -f` the `ignored.txt` + `target/built.txt`). RunTests use `Bundle.module.url(forResource:"mini", withExtension:nil, subdirectory:"Fixtures")`. Tasks 36-38 deferred. Task 35 release-time-only.
 
 ### ⚠️ Phase 3 critical watch-out (Task 18/19 — the integration linchpin)
 
