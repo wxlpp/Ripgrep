@@ -86,7 +86,11 @@ Running `bash scripts/generate-bindings.sh` produces, under `Sources/RipgrepKitF
 
 12. **Spec contradiction: `Duration` public API vs `.iOS(.v15)/.macOS(.v12)` floor → raise floor to iOS 16 / macOS 13.** Spec line 125 declares `.iOS(.v15), .macOS(.v12)` but lines 323/346 use `Duration` (`Options.timeout`, `SearchResult.elapsed`), and `Duration` is only available iOS 16.0+ / macOS 13.0+. Unconditional `Duration` in a public API at iOS15/macOS12 = hard `swift build` error ("'Duration' is only available in macOS 13.0 or newer"). The spec conflated *toolchain* floor (Xcode 16/Swift 6, line 615) with *deployment* floor. The `Duration`-first API is the spec's deliberate design (Tasks 21/22/23/26/29/30 all use it); `@available`-gating the entire public surface or replacing `Duration` would be far more invasive. **Resolution:** `Package.swift` `platforms: [.iOS(.v16), .macOS(.v13)]`. For consistency with Deviation #10 (binary min-OS should match the declared package floor), `scripts/build-xcframework.sh` deployment-target defaults bumped to `IPHONEOS_DEPLOYMENT_TARGET=16.0` / `MACOSX_DEPLOYMENT_TARGET=13.0` + xcframework rebuilt. Applied as a focused infra commit before Task 21.
 
-**NEXT: Task 21** (RipgrepKitCore Options). Tasks 36-38 deferred. Task 35 release-time-only.
+**DONE — Task 21 (Ripgrep.Options).** Commits `2e78ddd` + `cddc002`. Spec ✅ + code-quality ✅. 14-field Codable/Sendable struct, rg-aligned defaults; `Duration` JSON roundtrip confirmed lossless; Codable forward-compat note added.
+
+- **Task 23 carry-forward (Duration→ms):** `toFFI()` must convert `timeout: Duration?` to ms WITHOUT truncating sub-second — use `UInt64(c.seconds * 1000 + c.attoseconds / 1_000_000_000_000_000)` (the plan's Task 23 code block already does this; spec line ~375 shows an abbreviated form that would truncate — use the full form).
+
+**NEXT: Task 22** (RipgrepKitCore SearchResult types). Tasks 36-38 deferred. Task 35 release-time-only.
 
 ### ⚠️ Phase 3 critical watch-out (Task 18/19 — the integration linchpin)
 
