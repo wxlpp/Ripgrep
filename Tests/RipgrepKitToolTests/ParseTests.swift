@@ -67,3 +67,22 @@ final class ParseTests: XCTestCase {
         XCTAssertTrue(p.options.multiline)
     }
 }
+
+final class RunTests: XCTestCase {
+    private func fixturePath() -> String {
+        Bundle.module.url(forResource: "mini", withExtension: nil, subdirectory: "Fixtures")!.path
+    }
+
+    func testRunStringEndToEnd() async throws {
+        let p = fixturePath()
+        let out = try await Ripgrep.run("TODO \(p)")
+        XCTAssertTrue(out.contains("TODO"))
+    }
+
+    func testRunJSONOutput() async throws {
+        let p = fixturePath()
+        let out = try await Ripgrep.run("--json TODO \(p)")
+        let firstLine = out.split(separator: "\n").first.map(String.init) ?? ""
+        XCTAssertTrue(firstLine.hasPrefix("{"))
+    }
+}
