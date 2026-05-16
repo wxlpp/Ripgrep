@@ -167,6 +167,14 @@ Running `bash scripts/generate-bindings.sh` produces, under `Sources/RipgrepKitF
    - Applied in Task 16 (single-slice) + Task 17 (5-slice `stage_framework*` fns).
    - **Phase 3 watch-out (Task 18/19):** `Sources/RipgrepKitFFI/` currently also holds the generated `RipgrepCoreFFI.h` + `RipgrepCoreFFI.modulemap`. The C module actually comes from the binaryTarget framework. Having a second `RipgrepCoreFFI` modulemap/header in the `RipgrepKitFFI` Swift target's source dir may collide with the framework's module at `swift build`. Decide at Task 18/19 whether `RipgrepKitFFI` should contain ONLY `RipgrepCore.swift` (and the .h/.modulemap should be excluded from that target / live only in the xcframework). Not Task 16's problem (Task 16 = build-only smoke test).
 
+13. **PLAN ERRATA — `testSingleQuotes` is self-contradictory with the Tokenizer algorithm (resolved 2026-05-16).** Plan Task 27 test: `tokenize("'don\\'t' x") == ["don\\'t", "x"]` (input chars `'don\'t' x`). The plan's Tokenizer treats `\` inside single quotes as LITERAL (guard `ch == "\\" && !inSingle`), so the middle `'` closes the quote and the trailing `'` reopens it → ends with `inSingle=true` → throws "unbalanced quote". A single-quote nested in single-quotes is POSIX-invalid; throwing is actually correct. The plan's algorithm is SOUND for every real downstream use (Task 29: `-g '*.swift'`→`*.swift`; spec's core `-S 'func\s+\w+'`→regex with backslashes preserved). **Resolution: keep Tokenizer.swift EXACTLY as the plan; replace `testSingleQuotes` with a well-defined test of the design-critical property** (single-quoted content literal incl. backslashes):
+    ```swift
+    func testSingleQuotes() throws {
+        XCTAssertEqual(try Tokenizer.tokenize(#"'func\s+\w+' x"#), ["func\\s+\\w+", "x"])
+    }
+    ```
+    (Raw-string input chars `'func\s+\w+' x` → algorithm yields `["func\s+\w+", "x"]`; this is the exact regex-preservation behavior the tool exists for.) Implementer escalated correctly (NEEDS_CONTEXT); controller decided. Other 7 Task-27 tests are consistent with the plan algorithm and unchanged.
+
 ## Phase 2 Watch-outs (Task 14+)
 
 - Task 14 adds `uniffi::setup_scaffolding!()`, `#[derive(uniffi::Record)]`, `#[derive(uniffi::Object)]` on CancelToken, `#[uniffi::export]` on a `search_blocking` wrapper. The CancelToken constructor changes to return `Arc<Self>` for UniFFI — adjust all Rust call sites (tests construct `CancelToken::new(None)`; if it becomes `Arc`, tests need `Arc`-aware updates).
