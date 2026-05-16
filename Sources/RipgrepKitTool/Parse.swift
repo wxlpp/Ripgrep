@@ -38,8 +38,19 @@ extension Ripgrep {
             else { include.append(g) }
         }
 
-        // max-filesize parser (e.g. "5M", "1024K", "100")
-        let maxBytes: Int? = parsed.maxFilesize.flatMap(parseFilesize)
+        // max-filesize (e.g. "5M", "1024K", "100"): absent → no limit;
+        // present but unparseable (typo like "5X", "-5M") → error rather than
+        // silently dropping the limit.
+        let maxBytes: Int?
+        if let rawMaxFilesize = parsed.maxFilesize {
+            guard let bytes = parseFilesize(rawMaxFilesize) else {
+                throw Ripgrep.Error.invalidArguments(
+                    message: "invalid --max-filesize value: \(rawMaxFilesize)")
+            }
+            maxBytes = bytes
+        } else {
+            maxBytes = nil
+        }
 
         let opts = Options(
             caseInsensitive: parsed.ignoreCase,

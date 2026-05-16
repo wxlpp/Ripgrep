@@ -11,7 +11,11 @@ extension Ripgrep {
         public var message: String {
             switch self {
             case .invalidArguments(let m): return m
-            case .invalidPattern(let p):   return "invalid regex: \(p)"
+            // FFI path supplies the already-rendered Display ("invalid regex: …"
+            // from thiserror #[error] + flat_error); avoid double-prefixing while
+            // still prefixing a bare pattern (e.g. constructed directly in tests).
+            case .invalidPattern(let p):
+                return p.hasPrefix("invalid regex:") ? p : "invalid regex: \(p)"
             case .pathNotFound(let p):     return "path not found: \(p)"
             case .io(let m):               return "io error: \(m)"
             case .internalPanic(let m):    return "internal panic: \(m)"

@@ -229,6 +229,18 @@ Run at the finishing-a-development-branch checkpoint (user CLAUDE.md gate; `/cod
 
 None of the v0.2 items is a correctness defect for the v0.1.0 dev-form milestone (truncation correctness proven; cancellation e2e covered at the Swift layer; security mitigation exists via timeout and is now documented). They are pre-existing Phase-1 characteristics, not regressions from Phases 2-6.
 
+## PR #1 review (GitHub Copilot bot) — dispositions (2026-05-16)
+
+Copilot review: COMMENTED (non-blocking), 6 inline comments. Per `superpowers:receiving-code-review`:
+
+1. **Dead `Tests/RipgrepKitCoreTests/Stub.swift` + `Tests/RipgrepKitToolTests/Stub.swift`** → **FIXED** (deleted; both targets now have real tests; removes 2 no-op `XCTAssertTrue(true)`). Test count 48 → 47 (−2 stubs +1 new pin test).
+2. **Empty quoted token `""`/`''` → empty-string token** → algorithm UNCHANGED (pushed back: it's intentional shell-faithful behavior — dropping it would silently swallow `rg -g ''`, masking user error, the *opposite* of the reviewer's concern). Accepted the reviewer's other option: **added `testEmptyQuotedProducesEmptyToken`** pinning the semantics.
+3. **`Options.toFFI()` `precondition` traps host on negative Codable-decoded values** → **ESCALATED to user** (architectural, public-API source-stability: non-throwing→throwing is source-breaking once v0.1.0 is tagged; plan-dictated M5). Decision pending; documented as a pre-v0.1.0 decision point (see below).
+4. **Double `invalid regex:` prefix** (Deviation #15) → **FIXED** in `Error.swift`: `.invalidPattern` now `p.hasPrefix("invalid regex:") ? p : "invalid regex: \(p)"` (FFI flat_error supplies the full Display; idempotent guard keeps the bare-pattern path green so `ErrorTests` still passes).
+5. **`parseFilesize` silently drops malformed values (`5X`, `-5M`) → silent "no limit"** → **FIXED** in `Parse.swift`: three-way semantics — absent → no limit; valid → bytes; present-but-unparseable → `throw Ripgrep.Error.invalidArguments`. `testMaxFilesizeParsing` updated to assert the error path (the old test had codified the footgun).
+
+Verified after fixes: `swift test` 47/0-fail, 0 warnings; `cargo test -p ripgrep_core` 33; fmt clean. Deviation #15 is now RESOLVED (was deferred → fixed via PR feedback).
+
 ## Phase 2 Watch-outs (Task 14+)
 
 - Task 14 adds `uniffi::setup_scaffolding!()`, `#[derive(uniffi::Record)]`, `#[derive(uniffi::Object)]` on CancelToken, `#[uniffi::export]` on a `search_blocking` wrapper. The CancelToken constructor changes to return `Arc<Self>` for UniFFI — adjust all Rust call sites (tests construct `CancelToken::new(None)`; if it becomes `Arc`, tests need `Arc`-aware updates).

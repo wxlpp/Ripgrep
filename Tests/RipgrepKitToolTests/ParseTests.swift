@@ -56,8 +56,15 @@ final class ParseTests: XCTestCase {
         XCTAssertEqual(try Ripgrep.parse("x --max-filesize 5M").options.maxFileSizeBytes, 5 * 1024 * 1024)
         XCTAssertEqual(try Ripgrep.parse("x --max-filesize 1K").options.maxFileSizeBytes, 1024)
         XCTAssertEqual(try Ripgrep.parse("x --max-filesize 100").options.maxFileSizeBytes, 100)
-        XCTAssertNil(try Ripgrep.parse("x --max-filesize bad").options.maxFileSizeBytes)
-        XCTAssertNil(try Ripgrep.parse("x --max-filesize=-5M").options.maxFileSizeBytes)
+        XCTAssertNil(try Ripgrep.parse("x").options.maxFileSizeBytes)  // absent → no limit
+        // present but unparseable → error (not silently "no limit")
+        for bad in ["x --max-filesize bad", "x --max-filesize=-5M", "x --max-filesize 5X"] {
+            XCTAssertThrowsError(try Ripgrep.parse(bad)) { e in
+                guard let e = e as? Ripgrep.Error, case .invalidArguments = e else {
+                    return XCTFail("expected .invalidArguments for: \(bad)")
+                }
+            }
+        }
     }
 
     func testCaseFlagsMapIntoOptions() throws {

@@ -39,4 +39,12 @@ final class TokenizerTests: XCTestCase {
         XCTAssertEqual(try Tokenizer.tokenize(""), [])
         XCTAssertEqual(try Tokenizer.tokenize("   "), [])
     }
+
+    func testEmptyQuotedProducesEmptyToken() throws {
+        // Intentional, shell-faithful: an explicit empty quoted region IS a real
+        // empty-string token (so e.g. `rg -g ''` reaches the parser as an empty
+        // glob to reject, rather than being silently dropped). Pinned here.
+        XCTAssertEqual(try Tokenizer.tokenize("\"\" foo"), ["", "foo"])
+        XCTAssertEqual(try Tokenizer.tokenize("''"), [""])
+    }
 }
