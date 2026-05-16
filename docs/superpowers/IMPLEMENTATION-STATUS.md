@@ -127,7 +127,11 @@ Running `bash scripts/generate-bindings.sh` produces, under `Sources/RipgrepKitF
 ### Task 27 carry-forward (the @_exported landmine — act on it in Task 27)
 `Sources/RipgrepKitTool/Stub.swift` = `@_exported import RipgrepKitCore` (Task 19 placeholder, sole purpose: make the then-empty RipgrepKitTool target compile). Task 27 adds the FIRST real RipgrepKitTool file (`Tokenizer.swift`, which has its own `import RipgrepKitCore`). At that point **delete `Sources/RipgrepKitTool/Stub.swift`** — keeping `@_exported` silently re-exports all of RipgrepKitCore's API through the RipgrepKitTool product (breaks the product layering). Plan's later Tool files/tests already `import RipgrepKitCore` explicitly, so removal is safe. Bundle the deletion into Task 27's commit (RipgrepKitTool: stub → real).
 
-**NEXT: Task 27** (Tokenizer — Phase 5 RipgrepKitTool begins). Tasks 36-38 deferred. Task 35 release-time-only.
+**DONE — Task 27 (Tokenizer).** Commits `bcb0d60` + `64b408d`. Spec ✅ (algorithm byte-verbatim plan) + code-quality ✅. Plan Errata #13 applied (corrected testSingleQuotes). `Sources/RipgrepKitTool/Stub.swift` (@_exported) DELETED — RipgrepKitTool = real code now. `+testDanglingBackslashThrows`. 25 swift tests.
+
+14. **Package.swift: `RipgrepKitToolTests` deps now `["RipgrepKitTool", "RipgrepKitCore"]`** (added RipgrepKitCore). Reason: Task 27/29/30/31 tests use `@testable import RipgrepKitCore`; `@testable` needs a DIRECT test-target dependency (local SwiftPM tolerated the omission; stricter CI/toolchains reject it). Already fixed in `64b408d` — Tasks 29/30/31 inherit the correct declaration, no re-fix needed.
+
+**NEXT: Task 28** (RipgrepArgs ParsableCommand). Task 28 plan: `RipgrepArgs.swift` imports ONLY `ArgumentParser` (NOT RipgrepKitCore — it's an internal parsing struct). Tasks 36-38 deferred. Task 35 release-time-only.
 
 ### ⚠️ Phase 3 critical watch-out (Task 18/19 — the integration linchpin)
 
