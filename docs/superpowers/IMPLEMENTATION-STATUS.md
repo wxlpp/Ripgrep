@@ -90,7 +90,23 @@ Running `bash scripts/generate-bindings.sh` produces, under `Sources/RipgrepKitF
 
 - **Task 23 carry-forward (Duration→ms):** `toFFI()` must convert `timeout: Duration?` to ms WITHOUT truncating sub-second — use `UInt64(c.seconds * 1000 + c.attoseconds / 1_000_000_000_000_000)` (the plan's Task 23 code block already does this; spec line ~375 shows an abbreviated form that would truncate — use the full form).
 
-**NEXT: Task 22** (RipgrepKitCore SearchResult types). Tasks 36-38 deferred. Task 35 release-time-only.
+**DONE — Task 22 (SearchResult types).** Commits `6ea127a` + `59ed240`. Spec ✅ + code-quality ✅. Submatch/Match (Codable+Sendable+Equatable), SearchResult (Codable+Sendable, NOT Equatable) + formatters. 9 swift tests.
+
+### Verified generated FFI surface (for Task 23 — DO NOT make implementer re-derive)
+
+- `public func searchBlocking(request: SearchRequest, cancel: CancelToken) throws -> SearchResult`
+- `CancelToken`: `open class`; has `public convenience init(timeoutMs: UInt64?)`, `open func cancel()`, `open func isCancelled() -> Bool`. (The plan's `CancelToken(timeoutMs:)` / `token.cancel()` are valid.)
+- FFI `SearchRequest` fields EXACTLY match the plan's `toFFI()`: pattern, paths, caseInsensitive, smartCase, multiline, includeGlobs, excludeGlobs, fileTypes, respectGitignore, includeHidden, beforeContext:UInt32, afterContext:UInt32, maxMatches:UInt32?, maxFiles:UInt32?, maxFileSizeBytes:UInt64?, timeoutMs:UInt64?.
+- FFI `SearchMatch`: path:String, lineNumber:UInt64, line:String, beforeContext:[String], afterContext:[String], submatches:[Submatch]. FFI `Submatch`: start:UInt32, end:UInt32. FFI `SearchResult`: matches:[SearchMatch], truncated:Bool, cancelled:Bool, filesSearched:UInt64, elapsedMs:UInt64.
+- **Name collisions:** FFI `SearchResult` vs `Ripgrep.SearchResult`; FFI `Submatch` vs `Ripgrep.Submatch` (FFI `SearchMatch` does NOT collide with `Ripgrep.Match`). Task 23 conversion inits must qualify FFI types as `RipgrepKitFFI.SearchResult` / `RipgrepKitFFI.SearchMatch` / `RipgrepKitFFI.Submatch`.
+
+### Task 25 watch-outs (from Task 22 review)
+- `formattedAsText` does NOT dedup overlapping context between adjacent same-file matches (documented limitation). Task 25 tests should cover: blank-line-between-different-files, empty-results (`formattedAsJSONLines()` on empty → `""`, which `split("\n")` yields 1 empty element not 0), and multi-match-same-file behavior.
+
+### Task 30/31 decision point (record consciously before Task 31)
+- `Match` JSON uses synthesized camelCase keys (`lineNumber`, `beforeContext`...), NOT rg-style `line_number`. Current tool contract (`handleToolCall` returns raw String to the LLM) is LLM-opaque so camelCase is acceptable. IF Task 30/31 adds any code/consumer that parses the JSON as rg-JSON, add `CodingKeys` (snake_case) to `Match`. Decide explicitly at Task 31, don't discover post-merge.
+
+**NEXT: Task 23** (Ripgrep.search wiring — async/cancellation/FFI conversion; the Sendable boundary task). Tasks 36-38 deferred. Task 35 release-time-only.
 
 ### ⚠️ Phase 3 critical watch-out (Task 18/19 — the integration linchpin)
 
