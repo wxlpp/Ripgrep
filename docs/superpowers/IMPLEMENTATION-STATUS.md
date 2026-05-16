@@ -120,7 +120,9 @@ Running `bash scripts/generate-bindings.sh` produces, under `Sources/RipgrepKitF
 
 - **Task 25 watch-out:** plan's `fixturePath()` uses `Bundle.module.url(forResource: "mini", withExtension: nil)`. `resources:[.copy("Fixtures")]` preserves dir structure, so `mini` is at `Fixtures/mini` in the bundle — `forResource:"mini"` may return nil (→ force-unwrap crash). If so, use `Bundle.module.url(forResource: "mini", withExtension: nil, subdirectory: "Fixtures")`. Adapt the helper empirically; the 5 tests must genuinely pass (not crash on nil).
 
-**NEXT: Task 25** (SearchTests — first end-to-end Swift search). Tasks 36-38 deferred. Task 35 release-time-only.
+**DONE — Task 25 (SearchTests).** Commit `970467d`. Spec ✅ (anti-vacuity probe proved gitignore test genuine) + controller code-quality ✅. **Full Rust↔UniFFI↔Swift pipeline proven end-to-end.** `fixturePath()` uses `Bundle.module.url(forResource: "mini", withExtension: nil, subdirectory: "Fixtures")`. 14 swift tests.
+
+**NEXT: Task 26** (CancellationTests — last Phase 4 task). Use the same `fixturePath()` form. Cancellation surfaces as `SearchResult.cancelled == true`, NOT a thrown error (see Task 26 carry-forwards above). Tasks 36-38 deferred. Task 35 release-time-only.
 
 ### ⚠️ Phase 3 critical watch-out (Task 18/19 — the integration linchpin)
 
