@@ -32,7 +32,7 @@ let package = Package(
         ),
         .testTarget(
             name: "RipgrepKitToolTests",
-            dependencies: ["RipgrepKitTool"],
+            dependencies: ["RipgrepKitTool", "RipgrepKitCore"],
             resources: [.copy("Fixtures")]
         ),
     ],

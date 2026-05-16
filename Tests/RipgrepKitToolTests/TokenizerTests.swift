@@ -29,6 +29,12 @@ final class TokenizerTests: XCTestCase {
             if case .invalidArguments = e {} else { XCTFail() }
         }
     }
+    func testDanglingBackslashThrows() {
+        XCTAssertThrowsError(try Tokenizer.tokenize(#"foo\"#)) { e in
+            guard let e = e as? Ripgrep.Error else { return XCTFail() }
+            if case .invalidArguments = e {} else { XCTFail() }
+        }
+    }
     func testEmptyInputReturnsEmpty() throws {
         XCTAssertEqual(try Tokenizer.tokenize(""), [])
         XCTAssertEqual(try Tokenizer.tokenize("   "), [])
