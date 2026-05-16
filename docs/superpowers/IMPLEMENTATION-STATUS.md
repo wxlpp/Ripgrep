@@ -38,7 +38,11 @@ Commits (oldest→newest): b509d0d, e18570a, b459f43, 191de86, 1daeb34, f4e82f6,
 | 12 panic containment | ✅ |
 | 13 clippy/fmt closeout | ✅ |
 
-**NEXT: Task 14** (UniFFI scaffolding) through Task 35. Tasks 36-38 are deferred (fuzz/README/symlink-loop), not blocking.
+**DONE — Task 14 (UniFFI scaffolding).** Commits `75412c0` (scaffolding) + `13517db` (review fixes). Spec ✅ + code-quality ✅. 33 Rust tests. Plus pre-flight commits `242dffd` (rustfmt sink.rs + Cargo.lock) and `0aafbac` (doc).
+
+**NEXT: Task 15** (Generate Swift bindings) through Task 35. Tasks 36-38 deferred (fuzz/README/symlink-loop). Task 35 is release-time-only (no GitHub release yet).
+
+**KNOWN FOUNDATION FLAKE (must fix before relying on `cargo test` gates):** `limits_tests::max_matches_truncates_and_flags` (`crates/ripgrep_core/src/lib.rs`) fails ~20-40% under parallel test execution. Pre-existing Phase 1 defect (NOT a Task 14 regression). Real cause: race in `max_matches` enforcement under the parallel walker — the mini fixture has 3 `TODO` matches across 3 files, so with `max_matches=Some(1)` parallel workers can overshoot `matches.len()` and/or `truncated` non-deterministically. Phase 1 closeout's "32 green" was a probabilistic pass. Being remediated separately before Task 15.
 
 ## Plan Deviations Discovered (apply these going forward)
 
@@ -52,12 +56,13 @@ Commits (oldest→newest): b509d0d, e18570a, b459f43, 191de86, 1daeb34, f4e82f6,
 
 5. **`#[allow(dead_code)]` on `SearchResult.elapsed_ms`** in options.rs — intentional, commented "Exported to Swift via UniFFI". It becomes live once Task 14 adds UniFFI derives.
 
-6. **uniffi-bindgen install is broken in the plan (resolved 2026-05-16).** Plan Task 15 + Task 34 call `cargo install uniffi-bindgen --version 0.28.0`. That crate/version does NOT exist on crates.io (`error: could not find uniffi-bindgen in registry crates-io with version =0.28.3` either). Resolved uniffi lib version is **0.28.3**. Per official UniFFI 0.28 docs (context7 /mozilla/uniffi-rs), the correct pattern is an **in-tree bindgen binary**:
-   - Cargo.toml: `uniffi = { version = "0.28", features = ["build", "cli"] }` (add `cli`)
-   - Create `crates/ripgrep_core/src/bin/uniffi-bindgen.rs` containing `fn main() { uniffi::uniffi_bindgen_main() }` (cargo auto-discovers `src/bin/*`)
-   - Invoke via `cargo run -p ripgrep_core --bin uniffi-bindgen -- generate --library target/release/libripgrep_core.dylib --language swift --out-dir Sources/RipgrepKitFFI`
-   - Applied in: Task 14 (Cargo.toml + bin file), Task 15 (`scripts/generate-bindings.sh` uses `cargo run --bin uniffi-bindgen`, not bare `uniffi-bindgen`), Task 34 (drop the `cargo install uniffi-bindgen` CI step).
-   - Pre-flight env state (2026-05-16): all 5 Apple Rust targets installed; Xcode 26.4 present; Cargo.lock now committed; sink.rs rustfmt fixup committed (242dffd).
+6. **uniffi-bindgen install is broken in the plan (resolved 2026-05-16).** Plan Task 15 + Task 34 call `cargo install uniffi-bindgen --version 0.28.0`. That crate/version does NOT exist on crates.io (`error: could not find uniffi-bindgen in registry crates-io with version =0.28.3` either). Resolved uniffi lib version is **0.28.3**. Per official UniFFI 0.28 docs (context7 /mozilla/uniffi-rs), bindgen runs from an in-tree binary. **Final structure (after Task 14 code-review fixes, commit `13517db`): a SEPARATE workspace crate, not a bin inside ripgrep_core** — putting the `cli` feature on `ripgrep_core`'s own deps leaked clap into the shipped iOS static/dylib.
+   - `crates/ripgrep_core/Cargo.toml`: `uniffi = { version = "0.28" }` — NO `cli`, NO `build` feature. Proc-macro mode (`setup_scaffolding!()` + derives) needs neither. **`crates/ripgrep_core/build.rs` was DELETED** (the plan's `.ok()` build.rs is a no-op that silently swallows a NotFound forever; proc-macro mode requires no build.rs). Do not recreate it.
+   - `crates/uniffi-bindgen/` is a separate workspace member (binary crate `uniffi-bindgen`, `publish=false`, `uniffi = { version = "0.28", features = ["cli"] }`, `src/main.rs` = `fn main() { uniffi::uniffi_bindgen_main() }`). Root `Cargo.toml` `members = ["crates/*"]` glob already covers it.
+   - Invoke via `cargo run -p uniffi-bindgen -- generate --library target/release/libripgrep_core.dylib --language swift --out-dir Sources/RipgrepKitFFI`.
+   - **Task 15 must use `cargo run -p uniffi-bindgen -- generate ...`** (NOT bare `uniffi-bindgen`, NOT `cargo run -p ripgrep_core --bin ...`). **Task 34 must drop the `cargo install uniffi-bindgen` CI step** (the separate crate builds from source in the workspace).
+   - clap is provably absent from `ripgrep_core` runtime closure (`cargo tree -p ripgrep_core -e normal -i clap` → not found).
+   - Pre-flight env state (2026-05-16): all 5 Apple Rust targets installed; Xcode 26.4 present; Cargo.lock committed; sink.rs rustfmt fixup committed (242dffd).
 
 ## Phase 2 Watch-outs (Task 14+)
 
