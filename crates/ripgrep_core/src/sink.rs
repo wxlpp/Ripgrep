@@ -1,12 +1,12 @@
 use crate::cancel::CancelToken;
 use crate::options::{SearchMatch, Submatch};
 use crossbeam_channel::Sender;
-use grep_matcher::{Matcher};
+use grep_matcher::Matcher;
 use grep_searcher::{Searcher, Sink, SinkContext, SinkContextKind, SinkError, SinkMatch};
 use std::collections::VecDeque;
 use std::io;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 /// Cancel check cadence — Sink polls cancel token every N events.
 const CANCEL_CHECK_EVERY: usize = 100;
@@ -162,11 +162,7 @@ impl<M: Matcher> Sink for ChannelSink<M> {
         Ok(true)
     }
 
-    fn finish(
-        &mut self,
-        _: &Searcher,
-        _: &grep_searcher::SinkFinish,
-    ) -> Result<(), Self::Error> {
+    fn finish(&mut self, _: &Searcher, _: &grep_searcher::SinkFinish) -> Result<(), Self::Error> {
         self.flush_pending();
         Ok(())
     }
