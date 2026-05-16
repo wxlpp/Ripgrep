@@ -55,11 +55,37 @@ EOF
 [[ -f "Sources/RipgrepKitFFI/RipgrepCoreFFI.h" ]] || \
   { echo "ERROR: Sources/RipgrepKitFFI/RipgrepCoreFFI.h missing. Run scripts/generate-bindings.sh first." >&2; exit 1; }
 
-# Single slice (smoke test)
+# Build all 5 Rust target triples
 build_static "aarch64-apple-darwin"
-LIB="${CARGO_TARGET_DIR}/aarch64-apple-darwin/release/$LIB_NAME"
-MAC_FW=$(stage_framework "$LIB" "macos-arm64")
+build_static "x86_64-apple-darwin"
+build_static "aarch64-apple-ios"
+build_static "aarch64-apple-ios-sim"
+build_static "x86_64-apple-ios"
 
-xcodebuild -create-xcframework -framework "$MAC_FW" -output "$OUT"
+# lipo macOS arm64 + x86_64 into a fat binary
+mkdir -p "build/lipo/macos"
+lipo -create \
+    "${CARGO_TARGET_DIR}/aarch64-apple-darwin/release/$LIB_NAME" \
+    "${CARGO_TARGET_DIR}/x86_64-apple-darwin/release/$LIB_NAME" \
+    -output "build/lipo/macos/$LIB_NAME"
+
+# lipo iOS simulator arm64 + x86_64 into a fat binary
+mkdir -p "build/lipo/ios-sim"
+lipo -create \
+    "${CARGO_TARGET_DIR}/aarch64-apple-ios-sim/release/$LIB_NAME" \
+    "${CARGO_TARGET_DIR}/x86_64-apple-ios/release/$LIB_NAME" \
+    -output "build/lipo/ios-sim/$LIB_NAME"
+
+# Stage 3 slices (distinct slice_names avoid collisions in $BUILD_DIR)
+MAC_FW=$(stage_framework "build/lipo/macos/$LIB_NAME" "macos")
+IOS_FW=$(stage_framework "${CARGO_TARGET_DIR}/aarch64-apple-ios/release/$LIB_NAME" "ios-arm64")
+SIM_FW=$(stage_framework "build/lipo/ios-sim/$LIB_NAME" "ios-sim")
+
+xcodebuild -create-xcframework \
+    -framework "$MAC_FW" \
+    -framework "$IOS_FW" \
+    -framework "$SIM_FW" \
+    -output "$OUT"
+
 echo "Built: $OUT"
-ls -la "$OUT"
+ls "$OUT"
