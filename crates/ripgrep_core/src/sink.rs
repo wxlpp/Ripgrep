@@ -10,6 +10,10 @@ use std::sync::Arc;
 
 /// Cancel check cadence — Sink polls cancel token every N events.
 const CANCEL_CHECK_EVERY: usize = 100;
+/// Cancel check byte threshold — also poll when accumulated bytes since last check
+/// reach this limit. Bounds cancel latency on large/giant lines (e.g. minified JS)
+/// where event count alone would not reach CANCEL_CHECK_EVERY in time.
+const CANCEL_CHECK_BYTES: usize = 1 << 20; // 1 MiB
 
 /// Sink that pushes matches onto a crossbeam channel. Holds rolling
 /// before-context buffers per file and emits after-context lines via
@@ -23,6 +27,7 @@ pub struct ChannelSink<M: Matcher> {
     before_buf: VecDeque<String>,
     pending_after: Vec<SearchMatch>,
     events_since_check: usize,
+    bytes_since_check: usize,
     before_context: usize,
     after_context: usize,
 }
@@ -46,15 +51,20 @@ impl<M: Matcher> ChannelSink<M> {
             before_buf: VecDeque::with_capacity(before_context.max(1)),
             pending_after: Vec::new(),
             events_since_check: 0,
+            bytes_since_check: 0,
             before_context,
             after_context,
         }
     }
 
-    fn poll_cancel(&mut self) -> bool {
+    fn poll_cancel(&mut self, bytes: usize) -> bool {
         self.events_since_check += 1;
-        if self.events_since_check >= CANCEL_CHECK_EVERY {
+        self.bytes_since_check += bytes;
+        if self.events_since_check >= CANCEL_CHECK_EVERY
+            || self.bytes_since_check >= CANCEL_CHECK_BYTES
+        {
             self.events_since_check = 0;
+            self.bytes_since_check = 0;
             return self.cancel.is_cancelled();
         }
         false
@@ -92,13 +102,13 @@ impl<M: Matcher> Sink for ChannelSink<M> {
     type Error = SinkAbort;
 
     fn matched(&mut self, _: &Searcher, m: &SinkMatch<'_>) -> Result<bool, Self::Error> {
-        if self.poll_cancel() {
+        if self.poll_cancel(m.bytes().len()) {
             // Cancel: return Ok(false) — grep_searcher stops this file's search
             // IMMEDIATELY and STILL calls finish(), so flush_pending() runs and
             // already-collected matches are preserved. Do NOT change to Err(SinkAbort):
             // it stops just as immediately but SKIPS finish() (losing pending matches)
-            // for zero latency gain. Cancel-poll cadence (CANCEL_CHECK_EVERY) is the
-            // actual latency lever (see v0.2-P6).
+            // for zero latency gain. Cancel-poll cadence (event OR byte threshold,
+            // v0.2-P6) is the actual latency lever.
             return Ok(false);
         }
 
@@ -140,7 +150,7 @@ impl<M: Matcher> Sink for ChannelSink<M> {
     }
 
     fn context(&mut self, _: &Searcher, ctx: &SinkContext<'_>) -> Result<bool, Self::Error> {
-        if self.poll_cancel() {
+        if self.poll_cancel(ctx.bytes().len()) {
             // Same contract as matched(): Ok(false) stops immediately, finish()
             // still runs → flush_pending() preserves collected matches. See comment
             // in matched() above for full rationale. Do NOT change to Err(SinkAbort).
