@@ -122,8 +122,13 @@ fn search_blocking_inner(
     let mut matches: Vec<SearchMatch> = rx.iter().collect();
     matches.sort_by(|a, b| (a.path.as_str(), a.line_number).cmp(&(b.path.as_str(), b.line_number)));
 
+    // truncated = true when the walker was stopped by the match limit.
+    // We use >= rather than > because the walker quits as soon as
+    // match_counter reaches max; if we collected exactly max matches the
+    // limit was hit and callers must be told results may be incomplete.
+    // Parallel overshooting (collecting more than max) is also handled.
     let truncated = if let Some(max) = max_matches {
-        if matches.len() > max {
+        if matches.len() >= max {
             matches.truncate(max);
             true
         } else {
