@@ -62,6 +62,16 @@ fn search_blocking_inner(
     let walker = build_walker(&req)?.build_parallel();
 
     let (tx, rx) = unbounded::<SearchMatch>();
+    // match_counter/file_counter are bound/count-only atomics: nothing else is
+    // published through them (matches flow via the crossbeam channel). Relaxed
+    // is correct and sufficient — single-location coherence guarantees loads
+    // observe the latest increment promptly, so the walker Quits on >= max
+    // without delay. The residual overshoot (parallel workers each passing the
+    // < max check before peers' fetch_add is observed) is an inherent
+    // check-then-act race that Acquire/Release does NOT serialize; result
+    // correctness under overshoot is guaranteed by the post-truncation below
+    // (Errata #7). Do NOT "upgrade" these to Acquire/Release — it changes
+    // nothing here.
     let match_counter = Arc::new(AtomicUsize::new(0));
     let file_counter = Arc::new(AtomicUsize::new(0));
 
