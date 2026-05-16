@@ -117,7 +117,7 @@ impl<M: Matcher> Sink for ChannelSink<M> {
             }
         }
 
-        let line_number = m.line_number().unwrap_or(0);
+        let line_number = m.line_number().unwrap_or(0); // line numbers are enabled (search.rs sb.line_number(true)); 0 only on searcher misconfig
         let before: Vec<String> = self.before_buf.iter().cloned().collect();
 
         let sm = SearchMatch {
@@ -159,12 +159,17 @@ impl<M: Matcher> Sink for ChannelSink<M> {
                 if let Some(abs_line) = ctx.line_number() {
                     for m in &mut self.pending_after {
                         let m_line = m.line_number;
-                        if m_line < abs_line && abs_line <= m_line + self.after_context as u64 {
+                        if m_line < abs_line
+                            && abs_line <= m_line.saturating_add(self.after_context as u64)
+                        {
                             m.after_context.push(line.clone());
                         }
                     }
-                } else if let Some(m) = self.pending_after.last_mut() {
-                    m.after_context.push(line);
+                } else {
+                    debug_assert!(false, "ChannelSink: ctx.line_number() is None; SearcherBuilder must enable line_number(true)");
+                    if let Some(m) = self.pending_after.last_mut() {
+                        m.after_context.push(line);
+                    }
                 }
             }
             SinkContextKind::Other => {}

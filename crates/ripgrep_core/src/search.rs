@@ -111,6 +111,7 @@ fn search_blocking_inner(
                 after,
             );
             let mut sb = SearcherBuilder::new();
+            sb.line_number(true);
             sb.before_context(before);
             sb.after_context(after);
             sb.multi_line(multiline);

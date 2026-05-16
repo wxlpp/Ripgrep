@@ -524,6 +524,7 @@ mod adjacent_after_context_tests {
             !m1.after_context.is_empty(),
             "BUG: first match's after_context is empty; should contain 'tail1' from its -A window"
         );
+        // line 5 (tail2) is outside m1's window: m1@2, after=2 → 2 < L <= 4, so 5 excluded
         assert_eq!(
             m1.after_context,
             vec!["tail1".to_string()],
