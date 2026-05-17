@@ -100,3 +100,10 @@ mod cancel_byte_cadence_tests;
 #[cfg(test)]
 #[path = "tests/external_cancel_tests.rs"]
 mod external_cancel_tests;
+
+/// TDD for v0.3-perf-2: bound pending_after by evicting matured matches.
+/// Attribution must be identical with/without eviction; the bound (pending_len ≤
+/// after_context+1) is the perf property.
+#[cfg(test)]
+#[path = "tests/pending_after_bound_tests.rs"]
+mod pending_after_bound_tests;
