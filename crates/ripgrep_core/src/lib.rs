@@ -107,3 +107,10 @@ mod external_cancel_tests;
 #[cfg(test)]
 #[path = "tests/pending_after_bound_tests.rs"]
 mod pending_after_bound_tests;
+
+/// TDD for v0.4-CRLF-1: CRLF line terminator must not leave a stray `\r` in
+/// emitted match/context lines. Reverting the fix in sink.rs makes the
+/// assertions fail with trailing `\r` on every CRLF-file line.
+#[cfg(test)]
+#[path = "tests/crlf_tests.rs"]
+mod crlf_tests;

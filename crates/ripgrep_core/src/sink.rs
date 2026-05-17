@@ -36,6 +36,34 @@ pub struct ChannelSink<M: Matcher> {
     max_pending_seen: usize,
 }
 
+/// Decode a raw line buffer (from `SinkMatch::bytes()` / `SinkContext::bytes()`)
+/// to a `String`, stripping the trailing line terminator.
+///
+/// `grep_searcher` always includes the line terminator in the buffer.  For LF
+/// files the buffer ends with `\n`; for CRLF files it ends with `\r\n`.
+///
+/// Strategy (matches ripgrep's effective CRLF behaviour):
+///   1. `trim_end_matches('\n')` — strips the LF (and, for multiline spans,
+///      every trailing `\n`; that was the pre-existing behaviour and must not
+///      change for multiline matches).
+///   2. `.strip_suffix('\r')` — removes **exactly one** trailing `\r` that was
+///      immediately before the final `\n`.  Using `strip_suffix` (not
+///      `trim_end_matches`) is critical: it removes at most one `\r`, so
+///      internal `\r` bytes (including embedded `\r\n` sequences in multiline
+///      matches) are untouched.
+///
+/// Correctness table:
+///   `b"foo\n"`      → "foo"      (LF, unchanged)
+///   `b"foo\r\n"`    → "foo"      (CRLF, stray \r stripped)
+///   `b"foo"`        → "foo"      (no terminator, unchanged)
+///   `b"a\rb\n"`     → "a\rb"     (internal bare \r preserved)
+///   `b"a\r\nb\r\n"` → "a\r\nb"  (multiline: internal \r\n preserved, trailing stripped)
+fn decode_line(bytes: &[u8]) -> String {
+    let s = String::from_utf8_lossy(bytes);
+    let s = s.trim_end_matches('\n');
+    s.strip_suffix('\r').unwrap_or(s).to_string()
+}
+
 impl<M: Matcher> ChannelSink<M> {
     pub fn new(
         path: String,
@@ -161,11 +189,9 @@ impl<M: Matcher> Sink for ChannelSink<M> {
             return Ok(false);
         }
 
-        // Decode line; UTF-8 lossy.
+        // Decode line; UTF-8 lossy, strip trailing CRLF/LF terminator.
         let line_bytes = m.bytes();
-        let line = String::from_utf8_lossy(line_bytes)
-            .trim_end_matches('\n')
-            .to_string();
+        let line = decode_line(line_bytes);
 
         // Find submatches inside the line using the matcher.
         let mut submatches = Vec::new();
@@ -222,9 +248,7 @@ impl<M: Matcher> Sink for ChannelSink<M> {
             // in matched() above for full rationale. Do NOT change to Err(SinkAbort).
             return Ok(false);
         }
-        let line = String::from_utf8_lossy(ctx.bytes())
-            .trim_end_matches('\n')
-            .to_string();
+        let line = decode_line(ctx.bytes());
         match ctx.kind() {
             SinkContextKind::Before => {
                 if self.before_context > 0 {
