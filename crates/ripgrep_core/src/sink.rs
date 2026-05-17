@@ -208,7 +208,10 @@ impl<M: Matcher> Sink for ChannelSink<M> {
             }
         }
 
-        let line_number = m.line_number().unwrap_or(0); // line numbers are enabled (search.rs sb.line_number(true)); 0 only on searcher misconfig
+        let line_number = m.line_number().unwrap_or_else(|| {
+            debug_assert!(false, "ChannelSink: m.line_number() is None; SearcherBuilder must enable line_number(true)");
+            0
+        });
         let before: Vec<String> = self.before_buf.iter().cloned().collect();
 
         // Evict any pending match that can no longer receive After lines:
