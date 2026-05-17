@@ -53,11 +53,19 @@ pub struct ChannelSink<M: Matcher> {
 ///      matches) are untouched.
 ///
 /// Correctness table:
-///   `b"foo\n"`      → "foo"      (LF, unchanged)
-///   `b"foo\r\n"`    → "foo"      (CRLF, stray \r stripped)
-///   `b"foo"`        → "foo"      (no terminator, unchanged)
-///   `b"a\rb\n"`     → "a\rb"     (internal bare \r preserved)
-///   `b"a\r\nb\r\n"` → "a\r\nb"  (multiline: internal \r\n preserved, trailing stripped)
+///   `b"foo\n"`        → "foo"        (LF, unchanged)
+///   `b"foo\r\n"`      → "foo"        (CRLF, stray \r stripped)
+///   `b"foo"`          → "foo"        (no terminator, unchanged)
+///   `b"a\rb\n"`       → "a\rb"       (internal bare \r preserved)
+///   `b"a\r\nb\r\n"`   → "a\r\nb"    (multiline: internal \r\n preserved, trailing stripped)
+///   `b"a\nb\r\n\r\n"` → "a\nb\r"    (known limitation: trailing double-CRLF — see below)
+///
+/// Known limitation (accepted, out of scope): for a multiline match whose bytes
+/// end with two consecutive CRLF terminators (e.g. `b"a\nb\r\n\r\n"`),
+/// `trim_end_matches('\n')` is greedy on `\n` (pre-existing behaviour since
+/// v0.1.0) so `strip_suffix('\r')` removes only one `\r`, leaving one residual
+/// `\r`; a loop-strip "fix" would ambiguously remove content `\r` bytes and is
+/// therefore out of scope.
 fn decode_line(bytes: &[u8]) -> String {
     let s = String::from_utf8_lossy(bytes);
     let s = s.trim_end_matches('\n');

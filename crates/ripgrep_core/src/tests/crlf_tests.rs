@@ -7,13 +7,30 @@
 /// sink.rs makes every assertion in `crlf_match_line_has_no_trailing_cr` and
 /// `crlf_context_lines_have_no_trailing_cr` fail.
 use std::io::Write as _;
+use std::path::PathBuf;
 
 use super::cancel::CancelToken;
 use super::options::SearchRequest;
 use super::search::search_blocking;
 
-/// Write `content` (arbitrary bytes) to a unique temp file and return its path.
-fn write_temp_bytes(name: &str, content: &[u8]) -> String {
+/// RAII guard: deletes the temp file on drop (even on panic).
+struct TempFile(PathBuf);
+
+impl TempFile {
+    fn path(&self) -> &str {
+        self.0.to_str().unwrap()
+    }
+}
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Write `content` (arbitrary bytes) to a unique temp file and return a guard
+/// that deletes the file on drop.
+fn write_temp_bytes(name: &str, content: &[u8]) -> TempFile {
     let mut path = std::env::temp_dir();
     path.push(format!(
         "ripgrep_core_crlf_test_{name}_{}.txt",
@@ -21,7 +38,7 @@ fn write_temp_bytes(name: &str, content: &[u8]) -> String {
     ));
     let mut f = std::fs::File::create(&path).expect("create temp file");
     f.write_all(content).expect("write temp file");
-    path.to_str().unwrap().to_owned()
+    TempFile(path)
 }
 
 fn base_req(path: &str, pattern: &str) -> SearchRequest {
@@ -48,8 +65,8 @@ fn base_req(path: &str, pattern: &str) -> SearchRequest {
 #[test]
 fn crlf_match_line_has_no_trailing_cr() {
     // Non-vacuity: OLD code emits "alpha\r" — assert_eq fails, test reports the bug.
-    let path = write_temp_bytes("match", b"alpha\r\nbeta\r\ngamma\r\n");
-    let r = search_blocking(base_req(&path, "beta"), CancelToken::new(None)).unwrap();
+    let _tmp = write_temp_bytes("match", b"alpha\r\nbeta\r\ngamma\r\n");
+    let r = search_blocking(base_req(_tmp.path(), "beta"), CancelToken::new(None)).unwrap();
     assert_eq!(r.matches.len(), 1);
     let line = &r.matches[0].line;
     assert!(
@@ -63,8 +80,8 @@ fn crlf_match_line_has_no_trailing_cr() {
 #[test]
 fn crlf_context_lines_have_no_trailing_cr() {
     // Non-vacuity: OLD code emits "alpha\r" / "gamma\r" in context.
-    let path = write_temp_bytes("ctx", b"alpha\r\nbeta\r\ngamma\r\n");
-    let mut r = base_req(&path, "beta");
+    let _tmp = write_temp_bytes("ctx", b"alpha\r\nbeta\r\ngamma\r\n");
+    let mut r = base_req(_tmp.path(), "beta");
     r.before_context = 1;
     r.after_context = 1;
     let res = search_blocking(r, CancelToken::new(None)).unwrap();
@@ -93,8 +110,8 @@ fn crlf_context_lines_have_no_trailing_cr() {
 // (c) LF regression: LF-only files are byte-identical to before.
 #[test]
 fn lf_file_unchanged() {
-    let path = write_temp_bytes("lf", b"alpha\nbeta\ngamma\n");
-    let mut r = base_req(&path, "beta");
+    let _tmp = write_temp_bytes("lf", b"alpha\nbeta\ngamma\n");
+    let mut r = base_req(_tmp.path(), "beta");
     r.before_context = 1;
     r.after_context = 1;
     let res = search_blocking(r, CancelToken::new(None)).unwrap();
@@ -108,8 +125,8 @@ fn lf_file_unchanged() {
 // (c cont.) No-trailing-newline regression: bare line must still decode cleanly.
 #[test]
 fn no_trailing_newline_unchanged() {
-    let path = write_temp_bytes("noterminator", b"hello");
-    let r = search_blocking(base_req(&path, "hello"), CancelToken::new(None)).unwrap();
+    let _tmp = write_temp_bytes("noterminator", b"hello");
+    let r = search_blocking(base_req(_tmp.path(), "hello"), CancelToken::new(None)).unwrap();
     assert_eq!(r.matches.len(), 1);
     assert_eq!(r.matches[0].line, "hello");
 }
@@ -123,8 +140,8 @@ fn no_trailing_newline_unchanged() {
 #[test]
 fn crlf_multiline_internal_crlf_preserved() {
     // File: three CRLF lines. Pattern spans lines 1-2.
-    let path = write_temp_bytes("ml", b"alpha\r\nbeta\r\ngamma\r\n");
-    let mut r = base_req(&path, r"alpha\r\nbeta");
+    let _tmp = write_temp_bytes("ml", b"alpha\r\nbeta\r\ngamma\r\n");
+    let mut r = base_req(_tmp.path(), r"alpha\r\nbeta");
     r.multiline = true;
     let res = search_blocking(r, CancelToken::new(None)).unwrap();
     assert_eq!(res.matches.len(), 1, "expected one multiline match");
