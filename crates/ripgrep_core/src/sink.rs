@@ -190,6 +190,13 @@ impl<M: Matcher> Sink for ChannelSink<M> {
         self.flush_matured(line_number);
 
         let sm = SearchMatch {
+            // ACCEPTED per-match owned-String alloc (V3-perf-1, maintainer
+            // decision): SearchMatch is a UniFFI Record, so `path` MUST be an
+            // owned String per result by FFI contract — Arc<str> on the sink
+            // can't remove this. Eliminating it needs an FFI result-model
+            // redesign (group-by-file), a breaking public-API change not
+            // justified for an IO/regex-bound, max_matches-truncated workload.
+            // Do NOT re-raise without that redesign decision.
             path: self.path.clone(),
             line_number,
             line,
