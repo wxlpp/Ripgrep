@@ -38,8 +38,9 @@ extension OhMyGrep {
             self.elapsed = elapsed
         }
 
-        /// Renders like `rg --no-heading -n`: `path:line:text` for matches,
-        /// `path-line-text` for context, and `--` between non-adjacent groups.
+        /// Renders like `rg --no-heading -n -H`: `path:line:text` for each matched
+        /// line (multiline matches get one row per line), `path-line-text` for
+        /// context, and `--` between non-adjacent groups.
         ///
         /// - Parameter contextSeparators: emit `--` separators, as rg does when
         ///   `-A`/`-B`/`-C` is set. `nil` infers it from whether any match has context.
@@ -49,20 +50,21 @@ extension OhMyGrep {
             var lines: [String] = []
             var last: (path: String, line: Int)? = nil
             for m in matches {
+                let matchLines = m.line.split(separator: "\n", omittingEmptySubsequences: false)
                 let firstLine = m.lineNumber - m.beforeContext.count
+                let lastMatchLine = m.lineNumber + matchLines.count - 1
                 if separate, let last, last.path != m.path || firstLine > last.line + 1 {
                     lines.append("--")
                 }
-                last = (m.path, m.lineNumber + m.afterContext.count)
-                let baseLine = m.lineNumber
+                last = (m.path, lastMatchLine + m.afterContext.count)
                 for (i, b) in m.beforeContext.enumerated() {
-                    let ln = baseLine - (m.beforeContext.count - i)
-                    lines.append("\(m.path)-\(ln)-\(b)")
+                    lines.append("\(m.path)-\(firstLine + i)-\(b)")
                 }
-                lines.append("\(m.path):\(baseLine):\(m.line)")
+                for (i, text) in matchLines.enumerated() {
+                    lines.append("\(m.path):\(m.lineNumber + i):\(text)")
+                }
                 for (i, a) in m.afterContext.enumerated() {
-                    let ln = baseLine + i + 1
-                    lines.append("\(m.path)-\(ln)-\(a)")
+                    lines.append("\(m.path)-\(lastMatchLine + i + 1)-\(a)")
                 }
             }
             return lines.joined(separator: "\n")

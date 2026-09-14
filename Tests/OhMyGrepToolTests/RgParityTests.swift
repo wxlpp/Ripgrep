@@ -3,7 +3,7 @@ import XCTest
 @testable import OhMyGrepTool
 @testable import OhMyGrep
 
-/// Expected strings are `rg --no-heading -n` (ripgrep 14) output for the same files.
+/// Expected strings are `rg --no-heading -n -H` output (ripgrep 15.1) for the same files.
 final class RgParityTests: XCTestCase {
     private var dir: URL!
 
@@ -73,6 +73,18 @@ final class RgParityTests: XCTestCase {
         let expected = prefixed("ctx.txt", "5:HIT one\n7:HIT two") + "\n"
             + prefixed("gap.txt", "2:HIT a\n7:HIT b")
         XCTAssertEqual(out, expected)
+    }
+
+    func testMultilineMatchRendersEachLine() async throws {
+        try Data("a\nHIT1\nmid\nHIT2\nb\nc\nd\ne\n".utf8).write(to: file("ml.txt"))
+        let out = try await OhMyGrep.run(["-U", "-B", "2", "-A", "2", #"HIT1\nmid\nHIT2"#, file("ml.txt").path])
+        XCTAssertEqual(out, prefixed("ml.txt", "1-a\n2:HIT1\n3:mid\n4:HIT2\n5-b\n6-c"))
+    }
+
+    func testMultilineTrailingBlankLine() async throws {
+        try Data("x\nfoo\n\nbar\n".utf8).write(to: file("blank.txt"))
+        let out = try await OhMyGrep.run(["-U", #"foo\n\n"#, file("blank.txt").path])
+        XCTAssertEqual(out, prefixed("blank.txt", "2:foo\n3:"))
     }
 
     func testBinaryFilesSkippedUnlessText() async throws {

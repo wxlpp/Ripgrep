@@ -45,6 +45,44 @@ fn multiline_crlf_keeps_inner_terminators() {
 }
 
 #[test]
+fn multiline_match_keeps_trailing_blank_line() {
+    let dir = TempDir::new("mlblank");
+    let file = dir.write("f.txt", b"x\nfoo\n\nbar\n");
+    let mut r = req(r"foo\n\n", &file);
+    r.multiline = true;
+    let res = search_blocking(r, CancelToken::new(None)).unwrap();
+    assert_eq!(res.matches[0].line, "foo\n");
+}
+
+#[test]
+fn submatches_stay_within_line() {
+    let dir = TempDir::new("submatch");
+    let file = dir.write("f.txt", b"TODO\r\nTODO later\n");
+    let res = search_blocking(req(r"TODO\s*", &file), CancelToken::new(None)).unwrap();
+    for m in &res.matches {
+        for s in &m.submatches {
+            assert!(
+                s.end as usize <= m.line.len(),
+                "submatch {s:?} exceeds line {:?} ({} bytes)",
+                m.line,
+                m.line.len()
+            );
+        }
+    }
+    assert_eq!(res.matches[0].submatches[0].end, 4);
+    assert_eq!(res.matches[1].submatches[0].end, 5);
+}
+
+#[test]
+fn end_anchor_matches_before_terminator() {
+    let dir = TempDir::new("anchor");
+    let file = dir.write("f.txt", b"a TODO\n");
+    let res = search_blocking(req(r"TODO$", &file), CancelToken::new(None)).unwrap();
+    assert_eq!(res.matches.len(), 1);
+    assert_eq!(res.matches[0].submatches.len(), 1);
+}
+
+#[test]
 fn binary_files_are_skipped_by_default() {
     let dir = TempDir::new("bin");
     dir.write("text.txt", b"HIT text\n");

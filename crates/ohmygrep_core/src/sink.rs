@@ -15,7 +15,7 @@ const CANCEL_CHECK_BYTES: usize = 1 << 20;
 
 /// Per-file sink. A match owns only the contiguous non-match lines next to it:
 /// before-context never reaches back past the previous match and after-context
-/// ends at the next match, so rendering by line arithmetic stays exact.
+/// ends at the next match. A multiline match's `line` keeps its inner `\n`s.
 pub struct ChannelSink<M: Matcher> {
     path: String,
     tx: Sender<SearchMatch>,
@@ -29,11 +29,14 @@ pub struct ChannelSink<M: Matcher> {
     bytes_since_check: usize,
 }
 
-/// Strips the line terminator: the final `\n` run, then one `\r` before it.
+/// The bytes without one trailing line terminator (`\n` or `\r\n`).
+fn content(bytes: &[u8]) -> &[u8] {
+    let bytes = bytes.strip_suffix(b"\n").unwrap_or(bytes);
+    bytes.strip_suffix(b"\r").unwrap_or(bytes)
+}
+
 fn decode_line(bytes: &[u8]) -> String {
-    let s = String::from_utf8_lossy(bytes);
-    let s = s.trim_end_matches('\n');
-    s.strip_suffix('\r').unwrap_or(s).to_string()
+    String::from_utf8_lossy(content(bytes)).into_owned()
 }
 
 impl<M: Matcher> ChannelSink<M> {
@@ -137,7 +140,8 @@ impl<M: Matcher> Sink for ChannelSink<M> {
             line: decode_line(m.bytes()),
             before_context: self.before_buf.drain(..).collect(),
             after_context: Vec::new(),
-            submatches: self.submatches(m.bytes()),
+            // Offsets index the terminator-free bytes, so they never exceed `line`.
+            submatches: self.submatches(content(m.bytes())),
         });
         Ok(true)
     }

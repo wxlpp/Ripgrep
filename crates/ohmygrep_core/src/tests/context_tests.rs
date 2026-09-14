@@ -2,7 +2,7 @@ use super::cancel::CancelToken;
 use super::search::search_blocking;
 use super::support::{req, TempDir};
 
-// Expected values below are ripgrep 14 output for the same inputs.
+// Expected values below match ripgrep 15.1 output for the same inputs.
 const CTX: &[u8] = b"a\nb\nc\nd\nHIT one\ne\nHIT two\nf\n";
 const GAP: &[u8] = b"l1\nHIT a\nl3\nl4\nl5\nl6\nHIT b\nl8\n";
 
