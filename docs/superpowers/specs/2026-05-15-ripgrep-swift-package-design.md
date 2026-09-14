@@ -1,3 +1,5 @@
+> **Renamed 2026-09-14:** RipgrepKit is now oh-my-grep (package `OhMyGrep`, crate `ohmygrep_core`, FFI module `OhMyGrepCoreFFI`). This document is historical and keeps the original names.
+
 # Ripgrep Swift Package — Design Spec
 
 **Date:** 2026-05-15

@@ -1,1 +1,1 @@
-# Ripgrep
+# oh-my-grep

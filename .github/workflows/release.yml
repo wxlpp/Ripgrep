@@ -23,7 +23,7 @@ jobs:
 
       - name: Run tests
         run: |
-          cargo test -p ripgrep_core
+          cargo test -p ohmygrep_core
           swift test
 
       - name: Package release
@@ -33,6 +33,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/RipgrepCore.xcframework.zip
-            dist/RipgrepCore.xcframework.zip.sha256
+            dist/OhMyGrepCore.xcframework.zip
+            dist/OhMyGrepCore.xcframework.zip.sha256
           generate_release_notes: true
