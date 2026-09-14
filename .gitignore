@@ -8,3 +8,4 @@ build/
 *.xcworkspace
 .DS_Store
 dist/
+.claude/omsp/
