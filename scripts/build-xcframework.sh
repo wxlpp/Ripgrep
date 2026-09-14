@@ -17,9 +17,12 @@ HEADER="Sources/OhMyGrepFFI/${MODULE_NAME}.h"
 [[ -f "$HEADER" ]] || { echo "ERROR: $HEADER missing. Run scripts/generate-bindings.sh first." >&2; exit 1; }
 
 rm -rf build "$OUT"
-mkdir -p "$BUILD_DIR/headers"
-cp "$HEADER" "$BUILD_DIR/headers/"
-cat > "$BUILD_DIR/headers/module.modulemap" <<EOF
+# Headers live in a module-named subdirectory: Xcode copies every static
+# xcframework's Headers into one include/ dir, so a root module.modulemap collides
+# with other packages that do the same.
+mkdir -p "$BUILD_DIR/headers/$MODULE_NAME"
+cp "$HEADER" "$BUILD_DIR/headers/$MODULE_NAME/"
+cat > "$BUILD_DIR/headers/$MODULE_NAME/module.modulemap" <<EOF
 module ${MODULE_NAME} {
     header "${MODULE_NAME}.h"
     export *
@@ -28,7 +31,9 @@ EOF
 
 for triple in aarch64-apple-darwin x86_64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios; do
     echo "Building $CRATE for $triple..."
-    cargo build -p "$CRATE" --release --target "$triple"
+    # `cargo rustc --crate-type staticlib`: with rlib also in crate-type, cargo build
+    # skips LTO and ships bitcode-bearing objects instead.
+    cargo rustc -p "$CRATE" --release --target "$triple" --crate-type staticlib
 done
 
 lib() { echo "${CARGO_TARGET_DIR}/$1/release/$LIB_NAME"; }
@@ -45,3 +50,6 @@ xcodebuild -create-xcframework \
     -output "$OUT"
 
 echo "Built: $OUT"
+echo "SwiftPM caches Package.swift's local-vs-release choice: if this package was resolved"
+echo "before the XCFramework existed, run 'swift package reset' (Xcode: File > Packages >"
+echo "Reset Package Caches)."

@@ -23,6 +23,8 @@ jobs:
     runs-on: macos-15
     env:
       VERSION: ${{ inputs.version }}
+      # Release binaries are built with a fixed compiler so they are reproducible.
+      RUST_TOOLCHAIN: "1.96.0"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,8 +38,10 @@ jobs:
             echo "::error::tag $VERSION already exists"; exit 1
           fi
 
-      - name: Install Rust targets
+      - name: Install pinned Rust toolchain and targets
         run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
           rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios \
                             aarch64-apple-darwin x86_64-apple-darwin
 
@@ -45,9 +49,10 @@ jobs:
         run: |
           bash scripts/generate-bindings.sh
           git diff --exit-code -- Sources/OhMyGrepFFI
+          test -z "$(git status --porcelain -- Sources/OhMyGrepFFI)"
 
       - name: Rust tests
-        run: cargo test -p ohmygrep_core
+        run: cargo test --locked -p ohmygrep_core
 
       - name: Build and package XCFramework
         run: bash scripts/package-release.sh
@@ -62,9 +67,13 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "Release $VERSION"
+          # Only the manifest may change; anything else means the build mutated the tree.
+          git diff --exit-code -- . ':!Package.swift'
+          git add Package.swift
+          git commit -m "Release $VERSION"
           git tag "$VERSION"
-          git push origin HEAD:main "refs/tags/$VERSION"
+          # Atomic: if main moved meanwhile, neither the commit nor the tag is pushed.
+          git push --atomic origin HEAD:main "refs/tags/$VERSION"
 
       - name: Publish GitHub release
         env:
@@ -73,7 +82,7 @@ jobs:
           gh release create "$VERSION" \
             dist/OhMyGrepCore.xcframework.zip \
             dist/OhMyGrepCore.xcframework.zip.sha256 \
-            --title "$VERSION" --generate-notes
+            --verify-tag --title "$VERSION" --generate-notes
 
       - name: Verify a consumer can resolve the release
         run: |
@@ -84,10 +93,11 @@ jobs:
           import PackageDescription
           let package = Package(
               name: "Consumer",
-              platforms: [.macOS(.v13)],
+              platforms: [.macOS(.v13), .iOS(.v16)],
               dependencies: [.package(url: "https://github.com/${GITHUB_REPOSITORY}", exact: "$VERSION")],
               targets: [.target(name: "Consumer", dependencies: [.product(name: "OhMyGrep", package: "oh-my-grep")])]
           )
           EOF
           echo 'import OhMyGrep' > "$consumer/Sources/Consumer/Consumer.swift"
           swift build --package-path "$consumer"
+          (cd "$consumer" && xcodebuild -scheme Consumer -destination 'generic/platform=iOS' build)
