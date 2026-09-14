@@ -1,8 +1,11 @@
 use crate::cancel::CancelToken;
 use crate::options::{SearchMatch, Submatch};
+use crate::warnings::Warnings;
 use crossbeam_channel::Sender;
 use grep_matcher::Matcher;
-use grep_searcher::{Searcher, Sink, SinkContext, SinkContextKind, SinkError, SinkMatch};
+use grep_searcher::{
+    Searcher, Sink, SinkContext, SinkContextKind, SinkError, SinkFinish, SinkMatch,
+};
 use std::collections::VecDeque;
 use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -27,6 +30,10 @@ pub struct ChannelSink<M: Matcher> {
     pending: Option<SearchMatch>,
     events_since_check: usize,
     bytes_since_check: usize,
+    warnings: Arc<Warnings>,
+    explicit: bool,
+    binary_offset: Option<u64>,
+    matches_in_file: u64,
 }
 
 /// The bytes without one trailing line terminator (`\n` or `\r\n`).
@@ -59,7 +66,18 @@ impl<M: Matcher> ChannelSink<M> {
             pending: None,
             events_since_check: 0,
             bytes_since_check: 0,
+            warnings: Arc::new(Warnings::default()),
+            explicit: false,
+            binary_offset: None,
+            matches_in_file: 0,
         }
+    }
+
+    /// Report binary-file hits to `warnings`; `explicit` marks a path the caller named directly.
+    pub fn reporting_to(mut self, warnings: Arc<Warnings>, explicit: bool) -> Self {
+        self.warnings = warnings;
+        self.explicit = explicit;
+        self
     }
 
     fn poll_cancel(&mut self, bytes: usize) -> bool {
@@ -107,33 +125,39 @@ impl<M: Matcher> ChannelSink<M> {
     }
 }
 
+/// A searcher failure for one file (e.g. unreadable), surfaced as a warning.
 #[derive(Debug)]
-pub struct SinkAbort;
+pub struct SearchFailure(String);
 
-impl std::fmt::Display for SinkAbort {
+impl std::fmt::Display for SearchFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "sink aborted")
+        f.write_str(&self.0)
     }
 }
 
-impl std::error::Error for SinkAbort {}
+impl std::error::Error for SearchFailure {}
 
-impl SinkError for SinkAbort {
-    fn error_message<T: std::fmt::Display>(_: T) -> Self {
-        SinkAbort
+impl SinkError for SearchFailure {
+    fn error_message<T: std::fmt::Display>(message: T) -> Self {
+        SearchFailure(message.to_string())
     }
-    fn error_io(_: io::Error) -> Self {
-        SinkAbort
+    fn error_io(err: io::Error) -> Self {
+        SearchFailure(err.to_string())
     }
 }
 
 impl<M: Matcher> Sink for ChannelSink<M> {
-    type Error = SinkAbort;
+    type Error = SearchFailure;
 
     fn matched(&mut self, searcher: &Searcher, m: &SinkMatch<'_>) -> Result<bool, Self::Error> {
         // Cancel with Ok(false), not Err: grep-searcher still calls finish(),
         // which flushes the pending match instead of dropping it.
         if self.poll_cancel(m.bytes().len()) {
+            return Ok(false);
+        }
+        self.matches_in_file += 1;
+        // Like rg, a named binary file reports that it matches instead of returning lines.
+        if self.explicit && self.binary_offset.is_some() {
             return Ok(false);
         }
         self.flush_pending();
@@ -182,8 +206,24 @@ impl<M: Matcher> Sink for ChannelSink<M> {
         Ok(true)
     }
 
-    fn finish(&mut self, _: &Searcher, _: &grep_searcher::SinkFinish) -> Result<(), Self::Error> {
+    fn binary_data(&mut self, _: &Searcher, offset: u64) -> Result<bool, Self::Error> {
+        self.binary_offset.get_or_insert(offset);
+        Ok(true)
+    }
+
+    fn finish(&mut self, _: &Searcher, finish: &SinkFinish) -> Result<(), Self::Error> {
         self.flush_pending();
+        let offset = finish.binary_byte_offset().or(self.binary_offset);
+        if let (Some(offset), true) = (offset, self.matches_in_file > 0) {
+            let message = if self.explicit {
+                format!("binary file matches (found \"\\0\" byte around offset {offset})")
+            } else {
+                format!(
+                    "stopped searching binary file after match (found \"\\0\" byte around offset {offset})"
+                )
+            };
+            self.warnings.push(self.path.clone(), message);
+        }
         Ok(())
     }
 }

@@ -6,6 +6,9 @@ pub enum OhMyGrepError {
     #[error("invalid regex: {0}")]
     InvalidPattern(String),
 
+    #[error("invalid arguments: {0}")]
+    InvalidArguments(String),
+
     #[error("path not found: {0}")]
     PathNotFound(String),
 

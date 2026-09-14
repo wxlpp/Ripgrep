@@ -60,6 +60,7 @@ extension OhMyGrep {
             exclude: exclude,
             fileTypes: parsed.fileTypes,
             respectGitignore: !parsed.noIgnore,
+            requireGit: !parsed.noRequireGit,
             includeHidden: parsed.hidden,
             beforeContext: before,
             afterContext: after,

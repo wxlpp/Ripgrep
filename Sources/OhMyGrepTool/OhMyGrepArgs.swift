@@ -33,6 +33,9 @@ struct OhMyGrepArgs: ParsableCommand {
     @Flag(name: .customLong("no-ignore"))
     var noIgnore: Bool = false
 
+    @Flag(name: .customLong("no-require-git"))
+    var noRequireGit: Bool = false
+
     // Optional so an explicit `-A 0` / `-B 0` can override `-C`, as in rg.
     @Option(name: [.customShort("A"), .customLong("after-context")])
     var afterContext: Int?

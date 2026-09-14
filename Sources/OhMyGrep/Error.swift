@@ -29,6 +29,7 @@ extension OhMyGrep {
         static func from(_ ffi: OhMyGrepError) -> OhMyGrep.Error {
             switch ffi {
             case .InvalidPattern(let s): return .invalidPattern(s)
+            case .InvalidArguments(let s): return .invalidArguments(message: s)
             case .PathNotFound(let s):   return .pathNotFound(s)
             case .Io(let s):             return .io(s)
             case .InternalPanic(let s):  return .internalPanic(s)

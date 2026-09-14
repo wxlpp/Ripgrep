@@ -48,7 +48,8 @@ extension OhMyGrep.SearchResult {
             truncated: ffi.truncated,
             cancelled: ffi.cancelled,
             filesSearched: Int(ffi.filesSearched),
-            elapsed: .milliseconds(Int(ffi.elapsedMs))
+            elapsed: .milliseconds(Int(ffi.elapsedMs)),
+            warnings: ffi.warnings.map { OhMyGrep.Warning(path: $0.path, message: $0.message) }
         )
     }
 }

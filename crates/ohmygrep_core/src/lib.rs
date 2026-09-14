@@ -7,6 +7,7 @@ mod error;
 mod options;
 mod search;
 mod sink;
+mod warnings;
 
 use cancel::CancelToken;
 use error::OhMyGrepError;
@@ -58,6 +59,9 @@ mod options_tests;
 #[cfg(test)]
 #[path = "tests/panic_tests.rs"]
 mod panic_tests;
+#[cfg(test)]
+#[path = "tests/paths_and_warnings_tests.rs"]
+mod paths_and_warnings_tests;
 #[cfg(test)]
 #[path = "tests/search_e2e_tests.rs"]
 mod search_e2e_tests;

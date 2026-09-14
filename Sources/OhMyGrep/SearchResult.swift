@@ -24,18 +24,28 @@ extension OhMyGrep {
         }
     }
 
+    /// A per-path problem that did not stop the search. `path` is empty for summary notes.
+    public struct Warning: Codable, Sendable, Equatable {
+        public let path: String
+        public let message: String
+        public init(path: String, message: String) { self.path = path; self.message = message }
+    }
+
     public struct SearchResult: Codable, Sendable {
         public let matches: [Match]
         public let truncated: Bool
         public let cancelled: Bool
         public let filesSearched: Int
         public let elapsed: Duration
+        /// Unreadable paths, binary files and similar; capped at 100 plus an overflow note.
+        public let warnings: [Warning]
 
         public init(matches: [Match], truncated: Bool, cancelled: Bool,
-                    filesSearched: Int, elapsed: Duration) {
+                    filesSearched: Int, elapsed: Duration, warnings: [Warning] = []) {
             self.matches = matches; self.truncated = truncated
             self.cancelled = cancelled; self.filesSearched = filesSearched
             self.elapsed = elapsed
+            self.warnings = warnings
         }
 
         /// Renders like `rg --no-heading -n -H`: `path:line:text` for each matched
@@ -77,18 +87,16 @@ extension OhMyGrep {
             return lines.joined(separator: "\n")
         }
 
-        /// - Note: `try?` on `enc.encode` is safe because every `Match` field is
-        ///   trivially `Encodable` (String/Int/[String]/[Submatch]); a match can
-        ///   never be silently dropped today. If a future non-trivially-Encodable
-        ///   field is added to `Match`, replace this with explicit error handling.
+        /// One JSON object per match, then one `{"warning": {...}}` object per warning.
         public func formattedAsJSONLines() -> String {
             let enc = JSONEncoder()
-            enc.outputFormatting = []
-            return matches.compactMap { m in
-                guard let data = try? enc.encode(m),
-                      let s = String(data: data, encoding: .utf8) else { return nil }
-                return s
-            }.joined(separator: "\n")
+            enc.outputFormatting = [.sortedKeys]
+            // Encoding plain String/Int/array fields cannot fail.
+            func json(_ value: some Encodable) -> String {
+                String(decoding: try! enc.encode(value), as: UTF8.self)
+            }
+            return (matches.map(json) + warnings.map { json(["warning": $0]) })
+                .joined(separator: "\n")
         }
     }
 }

@@ -16,6 +16,11 @@ final class ParseTests: XCTestCase {
         XCTAssertEqual(p.options.exclude, ["*.test.swift"])
     }
 
+    func testNoRequireGitFlag() throws {
+        XCTAssertTrue(try OhMyGrep.parse("x").options.requireGit)
+        XCTAssertFalse(try OhMyGrep.parse("x --no-require-git").options.requireGit)
+    }
+
     func testNoIgnoreInvertsGitignore() throws {
         let p = try OhMyGrep.parse("x --no-ignore")
         XCTAssertFalse(p.options.respectGitignore)

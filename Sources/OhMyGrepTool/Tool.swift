@@ -22,9 +22,10 @@ extension OhMyGrep {
     }
     """#
 
-    public static func handleToolCall(_ input: ToolInput) async throws -> String {
+    /// - Parameter workingDirectory: base for relative paths in the model's arguments.
+    public static func handleToolCall(_ input: ToolInput, workingDirectory: String? = nil) async throws -> String {
         do {
-            return try await run(input.args)
+            return try await run(input.args, workingDirectory: workingDirectory)
         } catch let e as OhMyGrep.Error {
             return "ERROR: \(e.message)"
         }

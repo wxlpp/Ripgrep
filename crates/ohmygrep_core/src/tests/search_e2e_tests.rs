@@ -7,6 +7,8 @@ pub(super) fn req(pattern: &str) -> SearchRequest {
         pattern: pattern.into(),
         paths: vec!["tests/fixtures/mini".into()],
         respect_gitignore: true,
+        // The fixtures live in this repo; do not depend on that for gitignore.
+        require_git: false,
         ..Default::default()
     }
 }

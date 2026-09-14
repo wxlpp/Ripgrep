@@ -44,7 +44,11 @@ extension OhMyGrep {
         public var include: [String]
         public var exclude: [String]
         public var fileTypes: [String]
+        /// Honor `.gitignore`, `.ignore` and `.rgignore` files.
         public var respectGitignore: Bool
+        /// Apply `.gitignore` rules only inside a git repository, as rg does. Set to
+        /// `false` for app sandboxes, which rarely contain a `.git` directory.
+        public var requireGit: Bool
         public var includeHidden: Bool
         public var beforeContext: Int
         public var afterContext: Int
@@ -63,6 +67,7 @@ extension OhMyGrep {
             exclude: [String] = [],
             fileTypes: [String] = [],
             respectGitignore: Bool = true,
+            requireGit: Bool = true,
             includeHidden: Bool = false,
             beforeContext: Int = 0,
             afterContext: Int = 0,
@@ -79,6 +84,7 @@ extension OhMyGrep {
             self.exclude = exclude
             self.fileTypes = fileTypes
             self.respectGitignore = respectGitignore
+            self.requireGit = requireGit
             self.includeHidden = includeHidden
             self.beforeContext = beforeContext
             self.afterContext = afterContext
@@ -91,7 +97,7 @@ extension OhMyGrep {
 
         private enum CodingKeys: String, CodingKey {
             case caseInsensitive, smartCase, multiline, include, exclude, fileTypes
-            case respectGitignore, includeHidden, beforeContext, afterContext
+            case respectGitignore, requireGit, includeHidden, beforeContext, afterContext
             case maxMatches, maxFiles, maxFileSizeBytes, timeout, searchBinary
         }
 
@@ -111,6 +117,7 @@ extension OhMyGrep {
             exclude = try value(.exclude, d.exclude)
             fileTypes = try value(.fileTypes, d.fileTypes)
             respectGitignore = try value(.respectGitignore, d.respectGitignore)
+            requireGit = try value(.requireGit, d.requireGit)
             includeHidden = try value(.includeHidden, d.includeHidden)
             beforeContext = try value(.beforeContext, d.beforeContext)
             afterContext = try value(.afterContext, d.afterContext)
@@ -130,6 +137,7 @@ extension OhMyGrep {
             try c.encode(exclude, forKey: .exclude)
             try c.encode(fileTypes, forKey: .fileTypes)
             try c.encode(respectGitignore, forKey: .respectGitignore)
+            try c.encode(requireGit, forKey: .requireGit)
             try c.encode(includeHidden, forKey: .includeHidden)
             try c.encode(beforeContext, forKey: .beforeContext)
             try c.encode(afterContext, forKey: .afterContext)
@@ -146,6 +154,9 @@ extension OhMyGrep {
 extension OhMyGrep.Options {
     // Throws rather than trapping: decoded or hand-built values can be out of range.
     func toFFI(pattern: String, paths: [String]) throws(OhMyGrep.Error) -> SearchRequest {
+        guard !paths.isEmpty else {
+            throw .invalidArguments(message: "at least one path is required")
+        }
         guard (0...Int(UInt32.max)).contains(beforeContext) else {
             throw .invalidArguments(
                 message: "beforeContext out of range [0, \(UInt32.max)], got \(beforeContext)")
@@ -185,7 +196,7 @@ extension OhMyGrep.Options {
 
         return SearchRequest(
             pattern: pattern,
-            paths: paths.isEmpty ? ["."] : paths,
+            paths: paths,
             caseInsensitive: caseInsensitive,
             smartCase: smartCase,
             multiline: multiline,
@@ -193,6 +204,7 @@ extension OhMyGrep.Options {
             excludeGlobs: exclude,
             fileTypes: fileTypes,
             respectGitignore: respectGitignore,
+            requireGit: requireGit,
             includeHidden: includeHidden,
             beforeContext: UInt32(beforeContext),
             afterContext: UInt32(afterContext),

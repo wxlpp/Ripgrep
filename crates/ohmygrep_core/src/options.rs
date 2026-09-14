@@ -9,6 +9,8 @@ pub struct SearchRequest {
     pub exclude_globs: Vec<String>,
     pub file_types: Vec<String>,
     pub respect_gitignore: bool,
+    /// Apply `.gitignore` rules only inside a git repository (rg's default).
+    pub require_git: bool,
     pub include_hidden: bool,
     pub before_context: u32,
     pub after_context: u32,
@@ -20,9 +22,7 @@ pub struct SearchRequest {
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct Submatch {
-    // Byte offsets WITHIN a single matched line. u32 is sufficient: a single
-    // line exceeding 4 GiB is not a supported/realistic scenario. Widen to u64
-    // only if a real need arises (would ripple through UniFFI bindings + Swift).
+    // Byte offsets within one match; u32 is enough for any realistic line.
     pub start: u32,
     pub end: u32,
 }
@@ -37,11 +37,19 @@ pub struct SearchMatch {
     pub submatches: Vec<Submatch>,
 }
 
+/// A per-path problem that did not stop the search (unreadable file, binary file, ...).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SearchWarning {
+    pub path: String,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Default, uniffi::Record)]
 pub struct SearchResult {
     pub matches: Vec<SearchMatch>,
     pub truncated: bool,
     pub cancelled: bool,
     pub files_searched: u64,
-    pub elapsed_ms: u64, // Exported to Swift via UniFFI
+    pub elapsed_ms: u64,
+    pub warnings: Vec<SearchWarning>,
 }
