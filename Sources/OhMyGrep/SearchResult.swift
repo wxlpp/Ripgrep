@@ -38,16 +38,22 @@ extension OhMyGrep {
             self.elapsed = elapsed
         }
 
-        /// - Note: Does NOT deduplicate overlapping context between adjacent
-        ///   same-file matches (unlike `rg`, which inserts `--` separators and
-        ///   merges overlapping windows). Acceptable for the v0.1.0 LLM-tool
-        ///   contract; revisit if exact rg-parity text output is required.
-        public func formattedAsText() -> String {
+        /// Renders like `rg --no-heading -n`: `path:line:text` for matches,
+        /// `path-line-text` for context, and `--` between non-adjacent groups.
+        ///
+        /// - Parameter contextSeparators: emit `--` separators, as rg does when
+        ///   `-A`/`-B`/`-C` is set. `nil` infers it from whether any match has context.
+        public func formattedAsText(contextSeparators: Bool? = nil) -> String {
+            let separate = contextSeparators
+                ?? matches.contains { !$0.beforeContext.isEmpty || !$0.afterContext.isEmpty }
             var lines: [String] = []
-            var lastPath: String? = nil
+            var last: (path: String, line: Int)? = nil
             for m in matches {
-                if let lp = lastPath, lp != m.path { lines.append("") }
-                lastPath = m.path
+                let firstLine = m.lineNumber - m.beforeContext.count
+                if separate, let last, last.path != m.path || firstLine > last.line + 1 {
+                    lines.append("--")
+                }
+                last = (m.path, m.lineNumber + m.afterContext.count)
                 let baseLine = m.lineNumber
                 for (i, b) in m.beforeContext.enumerated() {
                     let ln = baseLine - (m.beforeContext.count - i)

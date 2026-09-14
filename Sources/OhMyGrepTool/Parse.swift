@@ -26,9 +26,9 @@ extension OhMyGrep {
             throw OhMyGrep.Error.invalidArguments(message: msg)
         }
 
-        // Merge -C with -A/-B (rg semantics: -A/-B explicit override -C).
-        let after = parsed.afterContext != 0 ? parsed.afterContext : parsed.context
-        let before = parsed.beforeContext != 0 ? parsed.beforeContext : parsed.context
+        // rg semantics: an explicit -A/-B (including 0) overrides -C.
+        let after = parsed.afterContext ?? parsed.context
+        let before = parsed.beforeContext ?? parsed.context
 
         // Split glob into include / exclude by `!` prefix.
         var include: [String] = []
@@ -66,7 +66,8 @@ extension OhMyGrep {
             maxMatches: parsed.maxCount,
             maxFiles: parsed.maxFiles,
             maxFileSizeBytes: maxBytes,
-            timeout: parsed.timeoutMs.map { .milliseconds($0) }
+            timeout: parsed.timeoutMs.map { .milliseconds($0) },
+            searchBinary: parsed.text
         )
 
         let paths = parsed.paths.isEmpty ? ["."] : parsed.paths

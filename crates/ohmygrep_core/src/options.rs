@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Debug, Clone, Default, uniffi::Record)]
 pub struct SearchRequest {
     pub pattern: String,
     pub paths: Vec<String>,
@@ -15,6 +15,7 @@ pub struct SearchRequest {
     pub max_matches: Option<u32>,
     pub max_files: Option<u32>,
     pub max_file_size_bytes: Option<u64>,
+    pub search_binary: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]

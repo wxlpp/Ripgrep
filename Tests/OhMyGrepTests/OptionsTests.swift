@@ -18,6 +18,15 @@ final class OptionsTests: XCTestCase {
         XCTAssertTrue(o.fileTypes.isEmpty)
         XCTAssertNil(o.maxFiles)
         XCTAssertNil(o.maxFileSizeBytes)
+        XCTAssertFalse(o.searchBinary)
+    }
+
+    func testDecodingMissingKeysUsesDefaults() throws {
+        let o = try JSONDecoder().decode(OhMyGrep.Options.self, from: Data(#"{"beforeContext": 1}"#.utf8))
+        XCTAssertEqual(o.beforeContext, 1)
+        XCTAssertTrue(o.respectGitignore)
+        XCTAssertFalse(o.searchBinary)
+        XCTAssertNil(o.maxMatches)
     }
 
     func testCodableRoundtrip() throws {

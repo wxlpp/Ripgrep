@@ -8,32 +8,32 @@ use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-/// Cancel check cadence — Sink polls cancel token every N events.
+/// Poll the cancel token every N sink events...
 const CANCEL_CHECK_EVERY: usize = 100;
-/// Cancel check byte threshold — also poll when accumulated bytes since last check
-/// reach this limit. Bounds cancel latency on large/giant lines (e.g. minified JS)
-/// where event count alone would not reach CANCEL_CHECK_EVERY in time.
-const CANCEL_CHECK_BYTES: usize = 1 << 20; // 1 MiB
+/// ...or after this many bytes, so a few giant lines cannot delay cancellation.
+const CANCEL_CHECK_BYTES: usize = 1 << 20;
 
-/// Sink that pushes matches onto a crossbeam channel. Holds rolling
-/// before-context buffers per file and emits after-context lines via
-/// SearcherBuilder's context handling.
+/// Per-file sink. A match owns only the contiguous non-match lines next to it:
+/// before-context never reaches back past the previous match and after-context
+/// ends at the next match, so rendering by line arithmetic stays exact.
 pub struct ChannelSink<M: Matcher> {
     path: String,
     tx: Sender<SearchMatch>,
     cancel: Arc<CancelToken>,
     match_counter: Arc<AtomicUsize>,
     matcher: M,
+    before_context: usize,
     before_buf: VecDeque<String>,
-    pending_after: Vec<SearchMatch>,
+    pending: Option<SearchMatch>,
     events_since_check: usize,
     bytes_since_check: usize,
-    before_context: usize,
-    after_context: usize,
-    /// High-water mark of `pending_after.len()` observed after each push.
-    /// Tracked only in test builds to verify the eviction bound.
-    #[cfg(test)]
-    max_pending_seen: usize,
+}
+
+/// Strips the line terminator: the final `\n` run, then one `\r` before it.
+fn decode_line(bytes: &[u8]) -> String {
+    let s = String::from_utf8_lossy(bytes);
+    let s = s.trim_end_matches('\n');
+    s.strip_suffix('\r').unwrap_or(s).to_string()
 }
 
 impl<M: Matcher> ChannelSink<M> {
@@ -44,7 +44,6 @@ impl<M: Matcher> ChannelSink<M> {
         match_counter: Arc<AtomicUsize>,
         matcher: M,
         before_context: usize,
-        after_context: usize,
     ) -> Self {
         Self {
             path,
@@ -52,29 +51,12 @@ impl<M: Matcher> ChannelSink<M> {
             cancel,
             match_counter,
             matcher,
-            before_buf: VecDeque::with_capacity(before_context.max(1)),
-            pending_after: Vec::new(),
+            before_context,
+            before_buf: VecDeque::with_capacity(before_context),
+            pending: None,
             events_since_check: 0,
             bytes_since_check: 0,
-            before_context,
-            after_context,
-            #[cfg(test)]
-            max_pending_seen: 0,
         }
-    }
-
-    /// Returns the current length of `pending_after`.
-    /// Used only in tests to verify the eviction bound.
-    #[cfg(test)]
-    pub fn pending_len(&self) -> usize {
-        self.pending_after.len()
-    }
-
-    /// Returns the highest `pending_after.len()` observed after any push during
-    /// the search.  Used only in tests to assert the O(after_context) bound.
-    #[cfg(test)]
-    pub fn max_pending_seen(&self) -> usize {
-        self.max_pending_seen
     }
 
     fn poll_cancel(&mut self, bytes: usize) -> bool {
@@ -91,39 +73,26 @@ impl<M: Matcher> ChannelSink<M> {
     }
 
     fn flush_pending(&mut self) {
-        for m in self.pending_after.drain(..) {
+        if let Some(m) = self.pending.take() {
             let _ = self.tx.send(m);
             self.match_counter.fetch_add(1, Ordering::Relaxed);
         }
     }
 
-    /// Drain and send the matured prefix of `pending_after`.
-    ///
-    /// A match `m` is matured once `cur > m.line_number + after_context`: it can
-    /// receive no more After lines.  Because matches are pushed in ascending
-    /// `line_number` order and `after_context` is constant, matured matches always
-    /// form a **prefix** of `pending_after`, so we can drain from the front.
-    ///
-    /// Call sites:
-    ///  • `matched()` with `cur = new_match.line_number` (before pushing new match)
-    ///  • `context()` After branch with `cur = abs_line` (before attributing the
-    ///    current line — matured matches have `m.line+after < abs_line` and thus
-    ///    `abs_line` is outside their window, so calling before attribution is correct
-    ///    and simplest)
-    fn flush_matured(&mut self, cur: u64) {
-        let after = self.after_context as u64;
-        // Count the matured prefix (m.line_number + after < cur) without any
-        // extra allocation.  The Vec is in ascending line order, so we can stop
-        // at the first non-matured entry.
-        let n = self
-            .pending_after
-            .iter()
-            .take_while(|m| m.line_number.saturating_add(after) < cur)
-            .count();
-        for m in self.pending_after.drain(..n) {
-            let _ = self.tx.send(m);
-            self.match_counter.fetch_add(1, Ordering::Relaxed);
+    fn submatches(&self, line: &[u8]) -> Vec<Submatch> {
+        let mut out = Vec::new();
+        let mut at = 0;
+        while let Ok(Some(mat)) = self.matcher.find_at(line, at) {
+            out.push(Submatch {
+                start: mat.start() as u32,
+                end: mat.end() as u32,
+            });
+            at = mat.end().max(mat.start() + 1);
+            if at >= line.len() {
+                break;
+            }
         }
+        out
     }
 }
 
@@ -132,7 +101,7 @@ pub struct SinkAbort;
 
 impl std::fmt::Display for SinkAbort {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "sink aborted (cancelled)")
+        write!(f, "sink aborted")
     }
 }
 
@@ -151,114 +120,44 @@ impl<M: Matcher> Sink for ChannelSink<M> {
     type Error = SinkAbort;
 
     fn matched(&mut self, _: &Searcher, m: &SinkMatch<'_>) -> Result<bool, Self::Error> {
+        // Cancel with Ok(false), not Err: grep-searcher still calls finish(),
+        // which flushes the pending match instead of dropping it.
         if self.poll_cancel(m.bytes().len()) {
-            // Cancel: return Ok(false) — grep_searcher stops this file's search
-            // IMMEDIATELY and STILL calls finish(), so flush_pending() runs and
-            // already-collected matches are preserved. Do NOT change to Err(SinkAbort):
-            // it stops just as immediately but SKIPS finish() (losing pending matches)
-            // for zero latency gain. Cancel-poll cadence (event OR byte threshold,
-            // v0.2-P6) is the actual latency lever.
             return Ok(false);
         }
-
-        // Decode line; UTF-8 lossy.
-        let line_bytes = m.bytes();
-        let line = String::from_utf8_lossy(line_bytes)
-            .trim_end_matches('\n')
-            .to_string();
-
-        // Find submatches inside the line using the matcher.
-        let mut submatches = Vec::new();
-        let mut cur = 0;
-        while let Ok(Some(mat)) = self.matcher.find_at(line_bytes, cur) {
-            submatches.push(Submatch {
-                start: mat.start() as u32,
-                end: mat.end() as u32,
-            });
-            // Guard against zero-width matches looping forever.
-            cur = mat.end().max(mat.start() + 1);
-            if cur >= line_bytes.len() {
-                break;
-            }
-        }
-
-        let line_number = m.line_number().unwrap_or(0); // line numbers are enabled (search.rs sb.line_number(true)); 0 only on searcher misconfig
-        let before: Vec<String> = self.before_buf.iter().cloned().collect();
-
-        // Evict any pending match that can no longer receive After lines:
-        // m.line + after_context < line_number  ⟹  matured.
-        self.flush_matured(line_number);
-
-        let sm = SearchMatch {
-            // ACCEPTED per-match owned-String alloc (V3-perf-1, maintainer
-            // decision): SearchMatch is a UniFFI Record, so `path` MUST be an
-            // owned String per result by FFI contract — Arc<str> on the sink
-            // can't remove this. Eliminating it needs an FFI result-model
-            // redesign (group-by-file), a breaking public-API change not
-            // justified for an IO/regex-bound, max_matches-truncated workload.
-            // Do NOT re-raise without that redesign decision.
+        self.flush_pending();
+        let line_number = m.line_number().unwrap_or_else(|| {
+            debug_assert!(false, "SearcherBuilder must enable line_number(true)");
+            0
+        });
+        self.pending = Some(SearchMatch {
+            // Owned per match: SearchMatch is a UniFFI record.
             path: self.path.clone(),
             line_number,
-            line,
-            before_context: before,
+            line: decode_line(m.bytes()),
+            before_context: self.before_buf.drain(..).collect(),
             after_context: Vec::new(),
-            submatches,
-        };
-        // Defer actual send until after-context is collected.
-        self.pending_after.push(sm);
-        #[cfg(test)]
-        {
-            if self.pending_after.len() > self.max_pending_seen {
-                self.max_pending_seen = self.pending_after.len();
-            }
-        }
+            submatches: self.submatches(m.bytes()),
+        });
         Ok(true)
     }
 
     fn context(&mut self, _: &Searcher, ctx: &SinkContext<'_>) -> Result<bool, Self::Error> {
         if self.poll_cancel(ctx.bytes().len()) {
-            // Same contract as matched(): Ok(false) stops immediately, finish()
-            // still runs → flush_pending() preserves collected matches. See comment
-            // in matched() above for full rationale. Do NOT change to Err(SinkAbort).
             return Ok(false);
         }
-        let line = String::from_utf8_lossy(ctx.bytes())
-            .trim_end_matches('\n')
-            .to_string();
         match ctx.kind() {
             SinkContextKind::Before => {
                 if self.before_context > 0 {
                     if self.before_buf.len() == self.before_context {
                         self.before_buf.pop_front();
                     }
-                    self.before_buf.push_back(line);
+                    self.before_buf.push_back(decode_line(ctx.bytes()));
                 }
             }
             SinkContextKind::After => {
-                // Attribute this after-context line to every pending match
-                // whose -A window covers it. A match at line `m_line` with
-                // an after-context of `N` should receive lines
-                // [m_line+1 .. m_line+N] (inclusive).
-                // If grep_searcher does not supply an absolute line number,
-                // fall back to the last pending match to avoid data loss.
-                if let Some(abs_line) = ctx.line_number() {
-                    // Evict matured matches before attributing: a matured match
-                    // has m.line + after_context < abs_line, so abs_line is outside
-                    // its window and it will never receive another After line.
-                    self.flush_matured(abs_line);
-                    for m in &mut self.pending_after {
-                        let m_line = m.line_number;
-                        if m_line < abs_line
-                            && abs_line <= m_line.saturating_add(self.after_context as u64)
-                        {
-                            m.after_context.push(line.clone());
-                        }
-                    }
-                } else {
-                    debug_assert!(false, "ChannelSink: ctx.line_number() is None; SearcherBuilder must enable line_number(true)");
-                    if let Some(m) = self.pending_after.last_mut() {
-                        m.after_context.push(line);
-                    }
+                if let Some(p) = self.pending.as_mut() {
+                    p.after_context.push(decode_line(ctx.bytes()));
                 }
             }
             SinkContextKind::Other => {}

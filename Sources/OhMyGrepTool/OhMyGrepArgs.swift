@@ -24,17 +24,21 @@ struct OhMyGrepArgs: ParsableCommand {
     @Option(name: [.customShort("t"), .customLong("type")])
     var fileTypes: [String] = []
 
+    @Flag(name: [.customShort("a"), .customLong("text")])
+    var text: Bool = false
+
     @Flag(name: .customLong("hidden"))
     var hidden: Bool = false
 
     @Flag(name: .customLong("no-ignore"))
     var noIgnore: Bool = false
 
+    // Optional so an explicit `-A 0` / `-B 0` can override `-C`, as in rg.
     @Option(name: [.customShort("A"), .customLong("after-context")])
-    var afterContext: Int = 0
+    var afterContext: Int?
 
     @Option(name: [.customShort("B"), .customLong("before-context")])
-    var beforeContext: Int = 0
+    var beforeContext: Int?
 
     @Option(name: [.customShort("C"), .customLong("context")])
     var context: Int = 0

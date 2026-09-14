@@ -30,10 +30,23 @@ final class SearchResultTests: XCTestCase {
             truncated: false, cancelled: false,
             filesSearched: 1, elapsed: .milliseconds(0)
         )
-        let out = r.formattedAsText()
-        XCTAssertTrue(out.contains("f.txt-9-before"))
-        XCTAssertTrue(out.contains("f.txt:10:match"))
-        XCTAssertTrue(out.contains("f.txt-11-after"))
+        XCTAssertEqual(r.formattedAsText(), "f.txt-9-before\nf.txt:10:match\nf.txt-11-after")
+    }
+
+    func testSeparatorInferredFromContext() {
+        func match(_ line: Int, before: [String] = [], after: [String] = []) -> OhMyGrep.Match {
+            OhMyGrep.Match(path: "f", lineNumber: line, line: "m", beforeContext: before,
+                           afterContext: after, submatches: [])
+        }
+        let withContext = OhMyGrep.SearchResult(
+            matches: [match(2, after: ["x"]), match(9, before: ["y"])],
+            truncated: false, cancelled: false, filesSearched: 1, elapsed: .zero)
+        XCTAssertEqual(withContext.formattedAsText(), "f:2:m\nf-3-x\n--\nf-8-y\nf:9:m")
+        let plain = OhMyGrep.SearchResult(
+            matches: [match(2), match(9)],
+            truncated: false, cancelled: false, filesSearched: 1, elapsed: .zero)
+        XCTAssertEqual(plain.formattedAsText(), "f:2:m\nf:9:m")
+        XCTAssertEqual(plain.formattedAsText(contextSeparators: true), "f:2:m\n--\nf:9:m")
     }
 
     func testFormattedAsJSONLinesPerMatch() throws {

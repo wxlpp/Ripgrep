@@ -33,6 +33,18 @@ final class ParseTests: XCTestCase {
         XCTAssertEqual(p.options.beforeContext, 2)
     }
 
+    func testExplicitZeroOverridesContext() throws {
+        let p = try OhMyGrep.parse("x -C 3 -A 0")
+        XCTAssertEqual(p.options.afterContext, 0)
+        XCTAssertEqual(p.options.beforeContext, 3)
+    }
+
+    func testTextFlagSearchesBinary() throws {
+        XCTAssertFalse(try OhMyGrep.parse("x").options.searchBinary)
+        XCTAssertTrue(try OhMyGrep.parse("-a x").options.searchBinary)
+        XCTAssertTrue(try OhMyGrep.parse("--text x").options.searchBinary)
+    }
+
     func testEmptyPathsDefaultsToCwd() throws {
         let p = try OhMyGrep.parse("x")
         XCTAssertEqual(p.paths, ["."])
