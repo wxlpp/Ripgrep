@@ -1,4 +1,4 @@
-use crate::columns::{cut_match, cut_prefix};
+use crate::columns::{cut_match, cut_prefix, first_row_cut};
 use crate::options::{SearchMatch, Submatch};
 use crate::shared::Shared;
 use crossbeam_channel::{SendTimeoutError, Sender};
@@ -8,6 +8,7 @@ use grep_searcher::{
 };
 use std::collections::VecDeque;
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -46,6 +47,7 @@ pub struct ChannelSink<M: Matcher> {
     bytes_since_check: usize,
     binary_offset: Option<u64>,
     matches_in_file: u64,
+    collecting: Arc<AtomicBool>,
 }
 
 /// The bytes without one trailing line terminator (`\n` or `\r\n`).
@@ -74,6 +76,7 @@ impl<M: Matcher> ChannelSink<M> {
             bytes_since_check: 0,
             binary_offset: None,
             matches_in_file: 0,
+            collecting: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -112,7 +115,13 @@ impl<M: Matcher> ChannelSink<M> {
         }
     }
 
+    /// Shared with the file's reader: true while a pending match collects after-context.
+    pub fn collecting_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.collecting)
+    }
+
     fn flush_pending(&mut self) -> bool {
+        self.collecting.store(false, Ordering::Relaxed);
         match self.pending.take() {
             Some(m) => self.send(m),
             None => true,
@@ -128,21 +137,25 @@ impl<M: Matcher> ChannelSink<M> {
             bytes.strip_suffix(b"\n").unwrap_or(bytes)
         };
         let limit = content(bytes).len();
+        // Only submatches that can survive the column cut are kept, so a line full
+        // of matches cannot allocate far beyond `max_columns`.
+        let multiline_cut = self
+            .config
+            .max_columns
+            .filter(|_| multi_line)
+            .and_then(|max| first_row_cut(content(bytes), max));
         let mut out: Vec<Submatch> = Vec::new();
         let mut at = 0;
         while let Ok(Some(mat)) = self.matcher.find_at(haystack, at) {
-            // Only submatches that can survive the column cut are kept, so a line full
-            // of matches cannot allocate far beyond `max_columns`.
-            if let Some(max) = self.config.max_columns {
-                let beyond = if multi_line {
-                    out.len() > max
-                } else {
-                    out.first()
-                        .is_some_and(|first| mat.start() > first.start as usize + max)
-                };
-                if beyond {
-                    break;
-                }
+            let beyond = match (multi_line, self.config.max_columns) {
+                (true, _) => multiline_cut.is_some_and(|cut| mat.start() >= cut),
+                (false, Some(max)) => out
+                    .first()
+                    .is_some_and(|first| mat.start() > first.start as usize + max),
+                (false, None) => false,
+            };
+            if beyond {
+                break;
             }
             out.push(Submatch {
                 start: mat.start().min(limit) as u32,
@@ -259,6 +272,7 @@ impl<M: Matcher> Sink for ChannelSink<M> {
             return Ok(self.send(found));
         }
         self.pending = Some(found);
+        self.collecting.store(true, Ordering::Relaxed);
         Ok(true)
     }
 
@@ -285,6 +299,9 @@ impl<M: Matcher> Sink for ChannelSink<M> {
                 if let Some(p) = self.pending.as_mut() {
                     p.after_context
                         .push(cut_prefix(content(ctx.bytes()), max_columns));
+                    if p.after_context.len() >= self.config.after_context {
+                        self.collecting.store(false, Ordering::Relaxed);
+                    }
                 }
             }
             SinkContextKind::Other => {}

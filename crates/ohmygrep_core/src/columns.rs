@@ -97,6 +97,18 @@ fn cut_window(content: &[u8], submatches: Vec<Submatch>, max: usize) -> CutLine 
     }
 }
 
+/// Offset in `content` where `cut_rows` makes its first cut, if any row exceeds `max`.
+pub fn first_row_cut(content: &[u8], max: usize) -> Option<usize> {
+    let mut row_start = 0;
+    for row in content.split(|&b| b == b'\n') {
+        if row.len() > max {
+            return Some(row_start + back_to_char_start(row, max));
+        }
+        row_start += row.len() + 1;
+    }
+    None
+}
+
 fn cut_rows(content: &[u8], submatches: Vec<Submatch>, max: usize) -> CutLine {
     let mut out = Vec::with_capacity(content.len().min(max * 4));
     let mut first_cut: Option<usize> = None;

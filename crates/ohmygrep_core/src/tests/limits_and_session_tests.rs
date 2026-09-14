@@ -256,7 +256,7 @@ fn stoppable_reader_ends_an_endless_read_once_cancelled() {
     cancel.cancel();
     let read = within(Duration::from_secs(5), move || {
         let mut buf = Vec::new();
-        StoppableReader::new(std::io::repeat(b'a'), shared, true)
+        StoppableReader::new(std::io::repeat(b'a'), shared, None)
             .read_to_end(&mut buf)
             .map(|_| buf.len())
             .unwrap()
@@ -294,7 +294,8 @@ fn cancel_after_the_walk_ended_reports_cancelled() {
     let cancel = CancelToken::new(None);
     let session = SearchSession::start(limited_path(&dir.path()), Arc::clone(&cancel)).unwrap();
     assert_eq!(session.next_batch(1).unwrap().matches.len(), 1);
-    std::thread::sleep(Duration::from_millis(300)); // the walk ends with 99 matches buffered
+    wait_until(|| session.worker_finished());
+    assert!(session.buffered() > 0);
     cancel.cancel();
     let last = session.next_batch(1024).unwrap();
     assert!(last.matches.is_empty());
@@ -306,6 +307,8 @@ fn cancel_after_the_walk_ended_reports_cancelled() {
 
 #[test]
 fn reaching_the_limit_keeps_after_context_of_reserved_matches() {
+    // Match 50 is sink event 99 and its context line event 100: the periodic stop
+    // check (every 100 events) lands exactly between them.
     let dir = many_matches("limit_context", 1, 100);
     let res = search_blocking(limited(&dir, Some(50), 1), CancelToken::new(None)).unwrap();
     assert_eq!(res.matches.len(), 50);
@@ -324,7 +327,9 @@ fn reserved_matches_are_delivered_through_a_full_channel() {
     let dir = many_matches("full_channel", 1, 400);
     let session =
         SearchSession::start(limited(&dir, Some(257), 0), CancelToken::new(None)).unwrap();
-    std::thread::sleep(Duration::from_millis(300)); // channel (256) full, 257th send waits
+    wait_until(|| session.buffered() == 256);
+    // Longer than the send poll interval, so the 257th send has timed out and retried.
+    std::thread::sleep(Duration::from_millis(150));
     let (streamed, summary) = drain(&session);
     assert_eq!(streamed.len(), 257);
     assert!(summary.truncated);
@@ -349,7 +354,8 @@ fn submatch_collection_is_bounded_by_max_columns() {
 #[test]
 fn multiline_bom_file_reserves_decoding_budget() {
     let dir = TempDir::new("bom");
-    let body = [b"HIT\n".as_slice(), &vec![b'x'; 300 * 1024]].concat();
+    // 350 KiB fits a 1 MiB budget alone, but not with the decoding reserve (3× + slack).
+    let body = [b"HIT\n".as_slice(), &vec![b'x'; 350 * 1024]].concat();
     let plain = dir.write("plain.txt", &body);
     let bom = dir.write("bom.txt", &[[0xEF, 0xBB, 0xBF].as_slice(), &body].concat());
     let limits = Limits {
@@ -418,4 +424,112 @@ fn match_without_after_context_is_sent_before_the_file_ends() {
     assert_eq!(first.line, "HIT now");
     release.send(()).unwrap();
     searching.join().unwrap();
+}
+
+fn wait_until(mut condition: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !condition() {
+        assert!(Instant::now() < deadline, "condition not reached");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Endless `xxx…\n` lines that count how many bytes were read.
+struct CountingLines {
+    read: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Read for CountingLines {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        for (i, b) in buf.iter_mut().enumerate() {
+            *b = if i % 100 == 99 { b'\n' } else { b'x' };
+        }
+        self.read
+            .fetch_add(buf.len(), std::sync::atomic::Ordering::Relaxed);
+        Ok(buf.len())
+    }
+}
+
+fn bytes_read_by_search(shared: Arc<Shared>) -> usize {
+    use grep_regex::RegexMatcher;
+    use grep_searcher::SearcherBuilder;
+    let read = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let reader = StoppableReader::new(
+        CountingLines {
+            read: Arc::clone(&read),
+        },
+        shared,
+        None,
+    );
+    let matcher = RegexMatcher::new("HIT").unwrap();
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let mut sink =
+        super::support::test_sink("endless", tx, CancelToken::new(None), matcher.clone());
+    let read_for_thread = Arc::clone(&read);
+    within(Duration::from_secs(10), move || {
+        SearcherBuilder::new()
+            .line_number(true)
+            .build()
+            .search_reader(&matcher, reader, &mut sink)
+            .unwrap();
+        read_for_thread.load(std::sync::atomic::Ordering::Relaxed)
+    })
+}
+
+#[test]
+fn stopped_reader_ends_the_search_not_just_one_read() {
+    let cancel = CancelToken::new(None);
+    cancel.cancel();
+    let cancelled = Arc::new(Shared::new(cancel, None, Limits::default()));
+    let at_limit = Arc::new(Shared::new(
+        CancelToken::new(None),
+        Some(0),
+        Limits::default(),
+    ));
+    for (label, shared) in [("cancel", cancelled), ("limit", at_limit)] {
+        let read = bytes_read_by_search(shared);
+        assert!(
+            read <= 4 * MIB,
+            "{label}: read {read} bytes before stopping"
+        );
+    }
+}
+
+#[test]
+fn multiline_bom_files_waiting_for_budget_do_not_deadlock() {
+    let dir = TempDir::new("bom_wait");
+    let body = [
+        [0xEF, 0xBB, 0xBF].as_slice(),
+        b"HIT\n",
+        &vec![b'x'; 200 * 1024],
+    ]
+    .concat();
+    for i in 0..8 {
+        dir.write(&format!("f{i}.txt"), &body);
+    }
+    let path = dir.path();
+    let res = within(Duration::from_secs(20), move || {
+        let mut r = req("HIT", &path);
+        r.multiline = true;
+        let limits = Limits {
+            multiline_budget: MIB,
+            threads: 8,
+            ..Limits::default()
+        };
+        search_with_limits(r, CancelToken::new(None), limits).unwrap()
+    });
+    assert_eq!(res.matches.len(), 8, "{:?}", res.warnings);
+}
+
+#[test]
+fn multiline_submatches_survive_when_no_row_is_cut() {
+    let dir = TempDir::new("ml_subs");
+    let file = dir.write("f.txt", "ab ab\n".repeat(50).as_bytes());
+    let mut r = req(r"b\s", &file);
+    r.multiline = true;
+    r.max_columns = Some(10);
+    let res = search_blocking(r, CancelToken::new(None)).unwrap();
+    let total: usize = res.matches.iter().map(|m| m.submatches.len()).sum();
+    assert!(res.matches.iter().all(|m| !m.line_truncated));
+    assert_eq!(total, 100);
 }

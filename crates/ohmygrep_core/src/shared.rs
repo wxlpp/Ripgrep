@@ -68,8 +68,12 @@ impl Shared {
         self.abort.load(Ordering::Relaxed) || self.cancel.is_cancelled()
     }
 
+    pub fn limit_reached(&self) -> bool {
+        self.limit_reached.load(Ordering::Relaxed)
+    }
+
     pub fn should_stop(&self) -> bool {
-        self.aborted() || self.limit_reached.load(Ordering::Relaxed)
+        self.aborted() || self.limit_reached()
     }
 
     /// Takes one match slot. The reservation that fills the limit also flags it,
@@ -158,35 +162,43 @@ pub struct StoppableReader<R> {
     inner: R,
     shared: Arc<Shared>,
     since_check: usize,
-    /// Also stop at the match limit. Off when after-context is collected: EOF mid-line
-    /// would hand a reserved match a truncated context line.
-    stop_on_limit: bool,
+    /// Set while a match in this file still collects after-context; the match limit
+    /// then does not stop reading, or that context would end in a cut-off line.
+    collecting: Option<Arc<AtomicBool>>,
+    /// Once stopped, stay at EOF: grep-searcher reads again after an EOF that
+    /// leaves a partial line in its buffer.
+    stopped: bool,
 }
 
 impl<R> StoppableReader<R> {
-    pub fn new(inner: R, shared: Arc<Shared>, stop_on_limit: bool) -> Self {
+    pub fn new(inner: R, shared: Arc<Shared>, collecting: Option<Arc<AtomicBool>>) -> Self {
         StoppableReader {
             inner,
             shared,
             since_check: 0,
-            stop_on_limit,
+            collecting,
+            stopped: false,
         }
+    }
+
+    fn should_stop(&self) -> bool {
+        let collecting = self
+            .collecting
+            .as_ref()
+            .is_some_and(|c| c.load(Ordering::Relaxed));
+        self.shared.aborted() || (self.shared.limit_reached() && !collecting)
     }
 }
 
 impl<R: Read> Read for StoppableReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.since_check >= MIB {
+        if !self.stopped && self.since_check >= MIB {
             self.since_check = 0;
-            let stop = if self.stop_on_limit {
-                self.shared.should_stop()
-            } else {
-                self.shared.aborted()
-            };
-            if stop {
-                // EOF rather than an error: `Interrupted` would be retried forever.
-                return Ok(0);
-            }
+            self.stopped = self.should_stop();
+        }
+        if self.stopped {
+            // EOF rather than an error: `Interrupted` would be retried forever.
+            return Ok(0);
         }
         let n = self.inner.read(buf)?;
         self.since_check += n;

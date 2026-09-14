@@ -116,11 +116,26 @@ impl SearchSession {
         let mut summary = worker
             .join()
             .map_err(|_| OhMyGrepError::InternalPanic("search thread panicked".into()))??;
-        summary.cancelled |= dropped_buffered;
+        summary.cancelled |= dropped_buffered && !self.rx.is_empty();
         Ok(SearchBatch {
             matches,
             summary: Some(summary),
         })
+    }
+}
+
+#[cfg(test)]
+impl SearchSession {
+    pub fn worker_finished(&self) -> bool {
+        self.worker
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .is_none_or(|w| w.is_finished())
+    }
+
+    pub fn buffered(&self) -> usize {
+        self.rx.len()
     }
 }
 
