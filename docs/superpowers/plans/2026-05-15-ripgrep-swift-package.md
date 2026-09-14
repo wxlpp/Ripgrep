@@ -1,3 +1,5 @@
+> **Renamed 2026-09-14:** RipgrepKit is now oh-my-grep (package `OhMyGrep`, crate `ohmygrep_core`, FFI module `OhMyGrepCoreFFI`). This document is historical and keeps the original names.
+
 # RipgrepKit Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

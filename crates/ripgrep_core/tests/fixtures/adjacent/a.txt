@@ -1,6 +1,0 @@
-pre
-MATCH one
-MATCH two
-tail1
-tail2
-tail3

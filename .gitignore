@@ -2,9 +2,15 @@ target/
 .build/
 .swiftpm/
 DerivedData/
-Frameworks/RipgrepCore.xcframework/
+Frameworks/OhMyGrepCore.xcframework/
 build/
 *.xcuserdata
 *.xcworkspace
 .DS_Store
 dist/
+.claude/omsp/
+.claude/worktrees/
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/coverage/

@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, "epic/**"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy -p ohmygrep_core --tests -- -D warnings
+      - name: Test
+        run: cargo test -p ohmygrep_core
+      - name: Bindings are up to date
+        run: |
+          bash scripts/generate-bindings.sh
+          git diff --exit-code -- Sources/OhMyGrepFFI
+
+  swift:
+    runs-on: macos-15
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: xcframework-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'crates/**/*.rs', 'Cargo.toml', 'crates/**/Cargo.toml') }}
+          restore-keys: xcframework-${{ runner.os }}-
+      - name: Install Rust targets
+        run: |
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios \
+                            aarch64-apple-darwin x86_64-apple-darwin
+      - name: Build XCFramework
+        run: bash scripts/build-xcframework.sh
+      - name: Swift tests (macOS)
+        run: swift test
+      - name: Swift tests (iOS simulator)
+        run: |
+          udid=$(xcrun simctl list devices available --json \
+            | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k,v in d.items() if "iOS" in k for x in v if x["name"].startswith("iPhone")))')
+          echo "Using simulator $udid"
+          xcodebuild test -scheme OhMyGrep-Package -destination "platform=iOS Simulator,id=$udid"
