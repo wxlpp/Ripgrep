@@ -82,16 +82,24 @@ impl<M: Matcher> ChannelSink<M> {
         }
     }
 
-    fn submatches(&self, line: &[u8]) -> Vec<Submatch> {
+    /// Like rg: multiline matches are searched with their terminators, single
+    /// lines without the trailing `\n`. Offsets are clamped to the decoded `line`.
+    fn submatches(&self, bytes: &[u8], multi_line: bool) -> Vec<Submatch> {
+        let haystack = if multi_line {
+            bytes
+        } else {
+            bytes.strip_suffix(b"\n").unwrap_or(bytes)
+        };
+        let limit = content(bytes).len();
         let mut out = Vec::new();
         let mut at = 0;
-        while let Ok(Some(mat)) = self.matcher.find_at(line, at) {
+        while let Ok(Some(mat)) = self.matcher.find_at(haystack, at) {
             out.push(Submatch {
-                start: mat.start() as u32,
-                end: mat.end() as u32,
+                start: mat.start().min(limit) as u32,
+                end: mat.end().min(limit) as u32,
             });
             at = mat.end().max(mat.start() + 1);
-            if at >= line.len() {
+            if at >= haystack.len() {
                 break;
             }
         }
@@ -122,7 +130,7 @@ impl SinkError for SinkAbort {
 impl<M: Matcher> Sink for ChannelSink<M> {
     type Error = SinkAbort;
 
-    fn matched(&mut self, _: &Searcher, m: &SinkMatch<'_>) -> Result<bool, Self::Error> {
+    fn matched(&mut self, searcher: &Searcher, m: &SinkMatch<'_>) -> Result<bool, Self::Error> {
         // Cancel with Ok(false), not Err: grep-searcher still calls finish(),
         // which flushes the pending match instead of dropping it.
         if self.poll_cancel(m.bytes().len()) {
@@ -140,8 +148,7 @@ impl<M: Matcher> Sink for ChannelSink<M> {
             line: decode_line(m.bytes()),
             before_context: self.before_buf.drain(..).collect(),
             after_context: Vec::new(),
-            // Offsets index the terminator-free bytes, so they never exceed `line`.
-            submatches: self.submatches(content(m.bytes())),
+            submatches: self.submatches(m.bytes(), searcher.multi_line_with_matcher(&self.matcher)),
         });
         Ok(true)
     }

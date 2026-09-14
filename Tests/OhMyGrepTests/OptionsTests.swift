@@ -30,13 +30,8 @@ final class OptionsTests: XCTestCase {
             maxMatches: 3, maxFiles: 4, maxFileSizeBytes: 5,
             timeout: .milliseconds(6), searchBinary: true)
         let d = try JSONDecoder().decode(OhMyGrep.Options.self, from: JSONEncoder().encode(o))
-        XCTAssertEqual(
-            [d.caseInsensitive, d.smartCase, d.multiline, d.respectGitignore, d.includeHidden, d.searchBinary],
-            [true, true, true, false, true, true])
-        XCTAssertEqual([d.include, d.exclude, d.fileTypes], [["*.swift"], ["*.md"], ["rust"]])
-        XCTAssertEqual([d.beforeContext, d.afterContext], [1, 2])
-        XCTAssertEqual([d.maxMatches, d.maxFiles, d.maxFileSizeBytes], [3, 4, 5])
-        XCTAssertEqual(d.timeout, .milliseconds(6))
+        XCTAssertEqual(d, o)
+        XCTAssertNotEqual(o, OhMyGrep.Options())
     }
 
     func testDecodingMissingKeysUsesDefaults() throws {

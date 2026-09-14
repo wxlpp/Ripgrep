@@ -37,7 +37,7 @@ extension Duration {
 extension OhMyGrep {
     /// Search options. Decoding tolerates missing keys (they take the `init()`
     /// defaults); an explicit `null` for an optional limit means "no limit".
-    public struct Options: Codable, Sendable {
+    public struct Options: Codable, Sendable, Equatable {
         public var caseInsensitive: Bool
         public var smartCase: Bool
         public var multiline: Bool

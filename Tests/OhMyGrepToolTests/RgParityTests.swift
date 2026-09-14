@@ -87,6 +87,13 @@ final class RgParityTests: XCTestCase {
         XCTAssertEqual(out, prefixed("blank.txt", "2:foo\n3:"))
     }
 
+    func testMultilineCRLFMatchNumbersEachLine() async throws {
+        // rg prints the CRs; oh-my-grep strips them, line numbers must still match (1, 2, 3).
+        try Data("alpha\r\nbeta\r\ngamma\r\ndelta\r\n".utf8).write(to: file("crlf.txt"))
+        let out = try await OhMyGrep.run(["-U", "-A", "1", #"alpha\r\nbeta"#, file("crlf.txt").path])
+        XCTAssertEqual(out, prefixed("crlf.txt", "1:alpha\n2:beta\n3-gamma"))
+    }
+
     func testBinaryFilesSkippedUnlessText() async throws {
         try Data("x\u{0}y HIT\n".utf8).write(to: file("blob.dat"))
         let skipped = try await OhMyGrep.run(["HIT", dir.path])

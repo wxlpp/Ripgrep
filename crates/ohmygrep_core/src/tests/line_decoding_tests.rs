@@ -52,6 +52,19 @@ fn multiline_match_keeps_trailing_blank_line() {
     r.multiline = true;
     let res = search_blocking(r, CancelToken::new(None)).unwrap();
     assert_eq!(res.matches[0].line, "foo\n");
+    assert_eq!(res.matches[0].submatches.len(), 1, "rg reports 0..5 here");
+    assert_eq!(res.matches[0].submatches[0].start, 0);
+    assert_eq!(res.matches[0].submatches[0].end, 4);
+}
+
+#[test]
+fn submatch_needing_line_terminator_is_kept_and_clamped() {
+    let dir = TempDir::new("ws_cr");
+    let file = dir.write("f.txt", b"TODO\r\n");
+    let res = search_blocking(req(r"TODO\s", &file), CancelToken::new(None)).unwrap();
+    let s = &res.matches[0].submatches;
+    assert_eq!(s.len(), 1, "rg reports 0..5 here");
+    assert_eq!((s[0].start, s[0].end), (0, 4));
 }
 
 #[test]

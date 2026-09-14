@@ -50,7 +50,14 @@ extension OhMyGrep {
             var lines: [String] = []
             var last: (path: String, line: Int)? = nil
             for m in matches {
-                let matchLines = m.line.split(separator: "\n", omittingEmptySubsequences: false)
+                // Split on scalars: Swift treats "\r\n" as one Character, not "\n".
+                let matchLines = m.line.unicodeScalars
+                    .split(separator: "\n", omittingEmptySubsequences: false)
+                    .map { row -> String in
+                        var row = String.UnicodeScalarView(row)
+                        if row.last == "\r" { row.removeLast() }
+                        return String(row)
+                    }
                 let firstLine = m.lineNumber - m.beforeContext.count
                 let lastMatchLine = m.lineNumber + matchLines.count - 1
                 if separate, let last, last.path != m.path || firstLine > last.line + 1 {
