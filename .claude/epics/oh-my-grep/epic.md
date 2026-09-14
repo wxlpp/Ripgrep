@@ -2,8 +2,8 @@
 name: oh-my-grep
 status: in-progress
 created: 2026-09-14T07:12:45Z
-updated: 2026-09-14T10:18:35Z
-progress: 71%
+updated: 2026-09-14T11:25:26Z
+progress: 86%
 prd: .claude/prds/oh-my-grep.md
 github: https://github.com/wxlpp/oh-my-grep/issues/5
 ---
@@ -74,7 +74,7 @@ Serial for tasks touching `sink.rs`/`search.rs`/`Options` (001 → 002 → 003 �
 - [x] #8 - Ignore rules, required paths, workingDirectory, warnings, symlink loop (parallel: false)
 - [x] #9 - Memory limits and streaming search API (parallel: false)
 - [x] #10 - Packaging: static-library XCFramework, privacy manifest, release profile, release pipeline (parallel: false)
-- [ ] #11 - PR CI with iOS simulator tests and nightly cargo-fuzz (parallel: true)
+- [x] #11 - PR CI with iOS simulator tests and nightly cargo-fuzz (parallel: true)
 - [ ] #12 - Documentation, Submatch ranges, tool schema, device re-verification (parallel: false)
 
 Total tasks: 7
