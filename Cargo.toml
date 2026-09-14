@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
+# fuzz/ is its own workspace (cargo-fuzz needs nightly).
+exclude = ["fuzz"]
 
 [workspace.package]
 edition = "2021"

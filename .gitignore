@@ -10,3 +10,7 @@ build/
 dist/
 .claude/omsp/
 .claude/worktrees/
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/coverage/
