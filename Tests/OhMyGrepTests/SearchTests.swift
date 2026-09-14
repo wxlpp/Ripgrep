@@ -13,10 +13,54 @@ final class SearchTests: XCTestCase {
         XCTAssertTrue(r.matches.contains { $0.line.contains("TODO") })
     }
 
-    func testRespectsGitignoreByDefault() async throws {
-        let r = try await OhMyGrep.search(pattern: "TODO", in: [fixturePath()])
-        XCTAssertFalse(r.matches.contains { $0.path.contains("ignored.txt") })
-        XCTAssertFalse(r.matches.contains { $0.path.contains("/target/") })
+    /// A fresh temp directory, never inside a git checkout (unlike the bundled fixtures on macOS).
+    private func makeTree(_ files: [String: String]) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ohmygrep-search-\(UUID().uuidString)")
+        for (name, content) in files {
+            let url = dir.appendingPathComponent(name)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(content.utf8).write(to: url)
+        }
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        return dir
+    }
+
+    private func names(_ r: OhMyGrep.SearchResult) -> [String] {
+        Set(r.matches.map { URL(fileURLWithPath: $0.path).lastPathComponent }).sorted()
+    }
+
+    func testGitignoreOutsideRepoRequiresRequireGitFalse() async throws {
+        let dir = try makeTree([
+            ".gitignore": "git_ignored.txt\n", ".ignore": "dot_ignored.txt\n",
+            "kept.txt": "TODO\n", "git_ignored.txt": "TODO\n", "dot_ignored.txt": "TODO\n",
+        ])
+        let rgDefault = try await OhMyGrep.search(pattern: "TODO", in: [dir.path])
+        XCTAssertEqual(names(rgDefault), ["git_ignored.txt", "kept.txt"])
+
+        var sandbox = OhMyGrep.Options(); sandbox.requireGit = false
+        let noGit = try await OhMyGrep.search(pattern: "TODO", in: [dir.path], options: sandbox)
+        XCTAssertEqual(names(noGit), ["kept.txt"])
+    }
+
+    func testEmptyPathsThrow() async throws {
+        do {
+            _ = try await OhMyGrep.search(pattern: "x", in: [])
+            XCTFail("expected throw")
+        } catch let e as OhMyGrep.Error {
+            guard case .invalidArguments = e else { return XCTFail("wrong error: \(e)") }
+        }
+    }
+
+    func testNamedBinaryFileSurfacesWarning() async throws {
+        let dir = try makeTree(["blob.dat": "x\u{0}y TODO\n"])
+        let file = dir.appendingPathComponent("blob.dat").path
+        let r = try await OhMyGrep.search(pattern: "TODO", in: [file])
+        XCTAssertTrue(r.matches.isEmpty)
+        XCTAssertEqual(r.warnings.count, 1)
+        XCTAssertEqual(r.warnings.first?.path, file)
+        XCTAssertTrue(r.warnings.first?.message.hasPrefix("binary file matches") == true)
     }
 
     func testHiddenFilesSkippedByDefault() async throws {

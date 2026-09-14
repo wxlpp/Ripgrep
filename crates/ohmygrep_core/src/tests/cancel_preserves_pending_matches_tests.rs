@@ -22,7 +22,7 @@ fn make_input(n: usize) -> Vec<u8> {
 /// channel. The result is non-empty and well-formed (not lost).
 ///
 /// Non-vacuity (see task instructions): temporarily changing `return Ok(false)`
-/// to `return Err(SinkAbort)` in matched() causes finish() to be skipped,
+/// to `return Err(_)` in matched() causes finish() to be skipped,
 /// flush_pending() never runs, and this test FAILS (0 matches on channel).
 /// That verifies the test actually guards the finish/flush-preserves-pending
 /// property and is not vacuously passing.
@@ -48,7 +48,7 @@ fn cancel_ok_false_preserves_matches_collected_before_cancel() {
     );
 
     // search_slice returns Ok(()) when the Sink returns Ok(false) (graceful stop);
-    // it returns Err(SinkAbort) only if the Sink returns Err(_).
+    // it returns Err(_) only if the Sink returns Err(_).
     let search_result = SearcherBuilder::new()
         .line_number(true)
         .build()
@@ -66,12 +66,12 @@ fn cancel_ok_false_preserves_matches_collected_before_cancel() {
     let collected: Vec<_> = rx.iter().collect();
 
     // KEY ASSERTION: matches collected before the cancel-check (event 100) must
-    // be present because finish() flushed them. With Err(SinkAbort) this would
+    // be present because finish() flushed them. With Err(_) this would
     // be 0 (finish() skipped), proving the test is not vacuous.
     assert!(
         !collected.is_empty(),
         "REGRESSION: cancel path lost pending matches — finish()/flush_pending() did not run. \
-         This indicates the cancel return was changed from Ok(false) to Err(SinkAbort)."
+         This indicates the cancel return was changed from Ok(false) to Err(_)."
     );
 
     // Sanity: we stopped before processing all 150 lines (cancel tripped at ~100).
@@ -96,7 +96,7 @@ fn cancel_ok_false_preserves_matches_collected_before_cancel() {
 }
 
 /// Verify the error type distinction: if the cancel path were changed to
-/// Err(SinkAbort), grep_searcher would propagate the error and search_slice
+/// Err(_), grep_searcher would propagate the error and search_slice
 /// would return Err(_), not Ok(()). This test documents that the current code
 /// (Ok(false)) produces Ok(()) from search_slice — another observable difference.
 #[test]
@@ -122,7 +122,7 @@ fn cancel_ok_false_search_slice_returns_ok_not_err() {
         .search_slice(&matcher, &input, &mut sink);
 
     // Ok(false) from the Sink → grep_searcher stops gracefully → Ok(())
-    // Err(SinkAbort) from the Sink → grep_searcher propagates → Err(SinkAbort)
+    // Err(_) from the Sink → grep_searcher propagates → Err(_)
     assert!(
         result.is_ok(),
         "search_slice should return Ok(()) when cancel uses Ok(false), got Err"

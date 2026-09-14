@@ -730,6 +730,10 @@ public struct SearchRequest {
     public var excludeGlobs: [String]
     public var fileTypes: [String]
     public var respectGitignore: Bool
+    /**
+     * Apply `.gitignore` rules only inside a git repository (rg's default).
+     */
+    public var requireGit: Bool
     public var includeHidden: Bool
     public var beforeContext: UInt32
     public var afterContext: UInt32
@@ -740,7 +744,11 @@ public struct SearchRequest {
 
     /// Default memberwise initializers are never public by default, so we
     /// declare one manually.
-    public init(pattern: String, paths: [String], caseInsensitive: Bool, smartCase: Bool, multiline: Bool, includeGlobs: [String], excludeGlobs: [String], fileTypes: [String], respectGitignore: Bool, includeHidden: Bool, beforeContext: UInt32, afterContext: UInt32, maxMatches: UInt32?, maxFiles: UInt32?, maxFileSizeBytes: UInt64?, searchBinary: Bool) {
+    public init(pattern: String, paths: [String], caseInsensitive: Bool, smartCase: Bool, multiline: Bool, includeGlobs: [String], excludeGlobs: [String], fileTypes: [String], respectGitignore: Bool,
+                /* 
+                    * Apply `.gitignore` rules only inside a git repository (rg's default).
+                    */ requireGit: Bool, includeHidden: Bool, beforeContext: UInt32, afterContext: UInt32, maxMatches: UInt32?, maxFiles: UInt32?, maxFileSizeBytes: UInt64?, searchBinary: Bool)
+    {
         self.pattern = pattern
         self.paths = paths
         self.caseInsensitive = caseInsensitive
@@ -750,6 +758,7 @@ public struct SearchRequest {
         self.excludeGlobs = excludeGlobs
         self.fileTypes = fileTypes
         self.respectGitignore = respectGitignore
+        self.requireGit = requireGit
         self.includeHidden = includeHidden
         self.beforeContext = beforeContext
         self.afterContext = afterContext
@@ -789,6 +798,9 @@ extension SearchRequest: Equatable, Hashable {
         if lhs.respectGitignore != rhs.respectGitignore {
             return false
         }
+        if lhs.requireGit != rhs.requireGit {
+            return false
+        }
         if lhs.includeHidden != rhs.includeHidden {
             return false
         }
@@ -823,6 +835,7 @@ extension SearchRequest: Equatable, Hashable {
         hasher.combine(excludeGlobs)
         hasher.combine(fileTypes)
         hasher.combine(respectGitignore)
+        hasher.combine(requireGit)
         hasher.combine(includeHidden)
         hasher.combine(beforeContext)
         hasher.combine(afterContext)
@@ -849,6 +862,7 @@ public struct FfiConverterTypeSearchRequest: FfiConverterRustBuffer {
                 excludeGlobs: FfiConverterSequenceString.read(from: &buf),
                 fileTypes: FfiConverterSequenceString.read(from: &buf),
                 respectGitignore: FfiConverterBool.read(from: &buf),
+                requireGit: FfiConverterBool.read(from: &buf),
                 includeHidden: FfiConverterBool.read(from: &buf),
                 beforeContext: FfiConverterUInt32.read(from: &buf),
                 afterContext: FfiConverterUInt32.read(from: &buf),
@@ -869,6 +883,7 @@ public struct FfiConverterTypeSearchRequest: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.excludeGlobs, into: &buf)
         FfiConverterSequenceString.write(value.fileTypes, into: &buf)
         FfiConverterBool.write(value.respectGitignore, into: &buf)
+        FfiConverterBool.write(value.requireGit, into: &buf)
         FfiConverterBool.write(value.includeHidden, into: &buf)
         FfiConverterUInt32.write(value.beforeContext, into: &buf)
         FfiConverterUInt32.write(value.afterContext, into: &buf)
@@ -899,15 +914,17 @@ public struct SearchResult {
     public var cancelled: Bool
     public var filesSearched: UInt64
     public var elapsedMs: UInt64
+    public var warnings: [SearchWarning]
 
     /// Default memberwise initializers are never public by default, so we
     /// declare one manually.
-    public init(matches: [SearchMatch], truncated: Bool, cancelled: Bool, filesSearched: UInt64, elapsedMs: UInt64) {
+    public init(matches: [SearchMatch], truncated: Bool, cancelled: Bool, filesSearched: UInt64, elapsedMs: UInt64, warnings: [SearchWarning]) {
         self.matches = matches
         self.truncated = truncated
         self.cancelled = cancelled
         self.filesSearched = filesSearched
         self.elapsedMs = elapsedMs
+        self.warnings = warnings
     }
 }
 
@@ -928,6 +945,9 @@ extension SearchResult: Equatable, Hashable {
         if lhs.elapsedMs != rhs.elapsedMs {
             return false
         }
+        if lhs.warnings != rhs.warnings {
+            return false
+        }
         return true
     }
 
@@ -937,6 +957,7 @@ extension SearchResult: Equatable, Hashable {
         hasher.combine(cancelled)
         hasher.combine(filesSearched)
         hasher.combine(elapsedMs)
+        hasher.combine(warnings)
     }
 }
 
@@ -951,7 +972,8 @@ public struct FfiConverterTypeSearchResult: FfiConverterRustBuffer {
                 truncated: FfiConverterBool.read(from: &buf),
                 cancelled: FfiConverterBool.read(from: &buf),
                 filesSearched: FfiConverterUInt64.read(from: &buf),
-                elapsedMs: FfiConverterUInt64.read(from: &buf)
+                elapsedMs: FfiConverterUInt64.read(from: &buf),
+                warnings: FfiConverterSequenceTypeSearchWarning.read(from: &buf)
             )
     }
 
@@ -961,6 +983,7 @@ public struct FfiConverterTypeSearchResult: FfiConverterRustBuffer {
         FfiConverterBool.write(value.cancelled, into: &buf)
         FfiConverterUInt64.write(value.filesSearched, into: &buf)
         FfiConverterUInt64.write(value.elapsedMs, into: &buf)
+        FfiConverterSequenceTypeSearchWarning.write(value.warnings, into: &buf)
     }
 }
 
@@ -976,6 +999,70 @@ public func FfiConverterTypeSearchResult_lift(_ buf: RustBuffer) throws -> Searc
 #endif
 public func FfiConverterTypeSearchResult_lower(_ value: SearchResult) -> RustBuffer {
     return FfiConverterTypeSearchResult.lower(value)
+}
+
+/**
+ * A per-path problem that did not stop the search (unreadable file, binary file, ...).
+ */
+public struct SearchWarning {
+    public var path: String
+    public var message: String
+
+    /// Default memberwise initializers are never public by default, so we
+    /// declare one manually.
+    public init(path: String, message: String) {
+        self.path = path
+        self.message = message
+    }
+}
+
+extension SearchWarning: Equatable, Hashable {
+    public static func == (lhs: SearchWarning, rhs: SearchWarning) -> Bool {
+        if lhs.path != rhs.path {
+            return false
+        }
+        if lhs.message != rhs.message {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(path)
+        hasher.combine(message)
+    }
+}
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSearchWarning: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SearchWarning {
+        return
+            try SearchWarning(
+                path: FfiConverterString.read(from: &buf),
+                message: FfiConverterString.read(from: &buf)
+            )
+    }
+
+    public static func write(_ value: SearchWarning, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+    }
+}
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSearchWarning_lift(_ buf: RustBuffer) throws -> SearchWarning {
+    return try FfiConverterTypeSearchWarning.lift(buf)
+}
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSearchWarning_lower(_ value: SearchWarning) -> RustBuffer {
+    return FfiConverterTypeSearchWarning.lower(value)
 }
 
 public struct Submatch {
@@ -1042,6 +1129,8 @@ public func FfiConverterTypeSubmatch_lower(_ value: Submatch) -> RustBuffer {
 public enum OhMyGrepError {
     case InvalidPattern(message: String)
 
+    case InvalidArguments(message: String)
+
     case PathNotFound(message: String)
 
     case Io(message: String)
@@ -1062,15 +1151,19 @@ public struct FfiConverterTypeOhMyGrepError: FfiConverterRustBuffer {
                 message: FfiConverterString.read(from: &buf)
             )
 
-        case 2: return try .PathNotFound(
+        case 2: return try .InvalidArguments(
                 message: FfiConverterString.read(from: &buf)
             )
 
-        case 3: return try .Io(
+        case 3: return try .PathNotFound(
                 message: FfiConverterString.read(from: &buf)
             )
 
-        case 4: return try .InternalPanic(
+        case 4: return try .Io(
+                message: FfiConverterString.read(from: &buf)
+            )
+
+        case 5: return try .InternalPanic(
                 message: FfiConverterString.read(from: &buf)
             )
 
@@ -1082,12 +1175,14 @@ public struct FfiConverterTypeOhMyGrepError: FfiConverterRustBuffer {
         switch value {
         case .InvalidPattern(_ /* message is ignored*/ ):
             writeInt(&buf, Int32(1))
-        case .PathNotFound(_ /* message is ignored*/ ):
+        case .InvalidArguments(_ /* message is ignored*/ ):
             writeInt(&buf, Int32(2))
-        case .Io(_ /* message is ignored*/ ):
+        case .PathNotFound(_ /* message is ignored*/ ):
             writeInt(&buf, Int32(3))
-        case .InternalPanic(_ /* message is ignored*/ ):
+        case .Io(_ /* message is ignored*/ ):
             writeInt(&buf, Int32(4))
+        case .InternalPanic(_ /* message is ignored*/ ):
+            writeInt(&buf, Int32(5))
         }
     }
 }
@@ -1193,6 +1288,31 @@ private struct FfiConverterSequenceTypeSearchMatch: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             try seq.append(FfiConverterTypeSearchMatch.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+private struct FfiConverterSequenceTypeSearchWarning: FfiConverterRustBuffer {
+    typealias SwiftType = [SearchWarning]
+
+    static func write(_ value: [SearchWarning], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSearchWarning.write(item, into: &buf)
+        }
+    }
+
+    static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SearchWarning] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SearchWarning]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            try seq.append(FfiConverterTypeSearchWarning.read(from: &buf))
         }
         return seq
     }

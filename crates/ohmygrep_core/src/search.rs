@@ -1,6 +1,18 @@
+use crate::cancel::CancelToken;
 use crate::error::OhMyGrepError;
-use crate::options::SearchRequest;
+use crate::options::{SearchMatch, SearchRequest, SearchResult};
+use crate::sink::ChannelSink;
+use crate::warnings::Warnings;
+use crossbeam_channel::unbounded;
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
+use grep_searcher::{BinaryDetection, SearcherBuilder};
+use ignore::overrides::OverrideBuilder;
+use ignore::types::TypesBuilder;
+use ignore::{WalkBuilder, WalkState};
+use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
 
 pub fn build_matcher(req: &SearchRequest) -> Result<RegexMatcher, OhMyGrepError> {
     let mut b = RegexMatcherBuilder::new();
@@ -10,16 +22,6 @@ pub fn build_matcher(req: &SearchRequest) -> Result<RegexMatcher, OhMyGrepError>
     b.build(&req.pattern)
         .map_err(|e| OhMyGrepError::InvalidPattern(e.to_string()))
 }
-
-use crate::cancel::CancelToken;
-use crate::options::{SearchMatch, SearchResult};
-use crate::sink::ChannelSink;
-use crossbeam_channel::unbounded;
-use grep_searcher::{BinaryDetection, SearcherBuilder};
-use ignore::WalkState;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::time::Instant;
 
 pub fn panic_safe<F, R>(f: F) -> Result<R, OhMyGrepError>
 where
@@ -52,6 +54,19 @@ pub fn search_blocking(
     panic_safe(move || search_blocking_inner(req, cancel))?
 }
 
+/// rg's policy: files reached by walking stop at the first NUL; files named
+/// explicitly are searched with NULs treated as line breaks so a match is
+/// still reported (as a warning, see `ChannelSink::finish`).
+fn binary_detection(req: &SearchRequest, explicit: bool) -> BinaryDetection {
+    if req.search_binary {
+        BinaryDetection::none()
+    } else if explicit {
+        BinaryDetection::convert(b'\x00')
+    } else {
+        BinaryDetection::quit(b'\x00')
+    }
+}
+
 fn search_blocking_inner(
     req: SearchRequest,
     cancel: Arc<CancelToken>,
@@ -67,25 +82,21 @@ fn search_blocking_inner(
     // orderings would not remove that check-then-act race.
     let match_counter = Arc::new(AtomicUsize::new(0));
     let file_counter = Arc::new(AtomicUsize::new(0));
+    let warnings = Arc::new(Warnings::default());
 
     let max_matches = req.max_matches.map(|n| n as usize);
     let max_files = req.max_files.map(|n| n as usize);
     let before = req.before_context as usize;
     let after = req.after_context as usize;
-    let multiline = req.multiline;
-    let binary_detection = if req.search_binary {
-        BinaryDetection::none()
-    } else {
-        BinaryDetection::quit(b'\x00')
-    };
 
     walker.run(|| {
         let tx = tx.clone();
         let cancel = Arc::clone(&cancel);
         let match_counter = Arc::clone(&match_counter);
         let file_counter = Arc::clone(&file_counter);
+        let warnings = Arc::clone(&warnings);
         let matcher = matcher.clone();
-        let binary_detection = binary_detection.clone();
+        let req = &req;
         Box::new(move |entry| {
             if cancel.is_cancelled() {
                 return WalkState::Quit;
@@ -102,29 +113,40 @@ fn search_blocking_inner(
             }
             let entry = match entry {
                 Ok(e) => e,
-                Err(_) => return WalkState::Continue,
+                Err(err) => {
+                    warnings.push_walk_error(&err);
+                    return WalkState::Continue;
+                }
             };
+            // Ignore-file syntax errors arrive attached to an otherwise valid entry.
+            if let Some(err) = entry.error() {
+                warnings.push_walk_error(err);
+            }
             if !entry.file_type().is_some_and(|t| t.is_file()) {
                 return WalkState::Continue;
             }
             file_counter.fetch_add(1, Ordering::Relaxed);
 
-            let path = entry.path().to_string_lossy().to_string();
+            let explicit = entry.depth() == 0;
+            let path = entry.path().to_string_lossy().into_owned();
             let mut sink = ChannelSink::new(
-                path,
+                path.clone(),
                 tx.clone(),
                 Arc::clone(&cancel),
                 Arc::clone(&match_counter),
                 matcher.clone(),
                 before,
-            );
+            )
+            .reporting_to(Arc::clone(&warnings), explicit);
             let mut sb = SearcherBuilder::new();
             sb.line_number(true);
             sb.before_context(before);
             sb.after_context(after);
-            sb.multi_line(multiline);
-            sb.binary_detection(binary_detection.clone());
-            let _ = sb.build().search_path(&matcher, entry.path(), &mut sink);
+            sb.multi_line(req.multiline);
+            sb.binary_detection(binary_detection(req, explicit));
+            if let Err(err) = sb.build().search_path(&matcher, entry.path(), &mut sink) {
+                warnings.push(path, err.to_string());
+            }
             WalkState::Continue
         })
     });
@@ -133,21 +155,16 @@ fn search_blocking_inner(
     let mut matches: Vec<SearchMatch> = rx.iter().collect();
     matches.sort_by(|a, b| (a.path.as_str(), a.line_number).cmp(&(b.path.as_str(), b.line_number)));
 
-    // truncated = true when the walker was stopped by the match limit.
-    // We use >= rather than > because the walker quits as soon as
-    // match_counter reaches max; if we collected exactly max matches the
-    // limit was hit and callers must be told results may be incomplete.
-    // Parallel overshooting (collecting more than max) is also handled.
-    let truncated = if let Some(max) = max_matches {
-        if matches.len() >= max {
+    // `>=`: collecting exactly `max` means the walk was stopped by the limit.
+    let truncated = match max_matches {
+        Some(max) if matches.len() >= max => {
             matches.truncate(max);
             true
-        } else {
-            false
         }
-    } else {
-        false
+        _ => false,
     };
+
+    let warnings = warnings.take();
 
     Ok(SearchResult {
         matches,
@@ -155,40 +172,46 @@ fn search_blocking_inner(
         cancelled: cancel.is_cancelled(),
         files_searched: file_counter.load(Ordering::Relaxed) as u64,
         elapsed_ms: start.elapsed().as_millis() as u64,
+        warnings,
     })
 }
 
-use ignore::overrides::OverrideBuilder;
-use ignore::types::TypesBuilder;
-use ignore::WalkBuilder;
-use std::path::Path;
-
 pub fn build_walker(req: &SearchRequest) -> Result<WalkBuilder, OhMyGrepError> {
-    if req.paths.is_empty() {
-        return Err(OhMyGrepError::PathNotFound("(empty paths)".into()));
-    }
+    let Some(first) = req.paths.first() else {
+        return Err(OhMyGrepError::InvalidArguments(
+            "at least one path is required".into(),
+        ));
+    };
     for p in &req.paths {
         if !Path::new(p).exists() {
             return Err(OhMyGrepError::PathNotFound(p.clone()));
         }
     }
 
-    let first = &req.paths[0];
     let mut wb = WalkBuilder::new(first);
     for p in &req.paths[1..] {
         wb.add(p);
     }
 
+    let respect = req.respect_gitignore;
     wb.hidden(!req.include_hidden);
-    wb.git_ignore(req.respect_gitignore);
-    wb.git_global(req.respect_gitignore);
-    wb.git_exclude(req.respect_gitignore);
-    wb.parents(req.respect_gitignore);
-    wb.ignore(true);
+    wb.git_ignore(respect);
+    wb.git_global(respect);
+    wb.git_exclude(respect);
+    wb.parents(respect);
+    wb.ignore(respect);
+    wb.require_git(req.require_git);
+    if respect {
+        wb.add_custom_ignore_filename(".rgignore");
+    }
 
     if let Some(max) = req.max_file_size_bytes {
         wb.max_filesize(Some(max));
     }
+
+    let invalid = |what: &str, e: &dyn std::fmt::Display| {
+        OhMyGrepError::InvalidArguments(format!("{what}: {e}"))
+    };
 
     if !req.file_types.is_empty() {
         let mut tb = TypesBuilder::new();
@@ -196,25 +219,19 @@ pub fn build_walker(req: &SearchRequest) -> Result<WalkBuilder, OhMyGrepError> {
         for t in &req.file_types {
             tb.select(t);
         }
-        let types = tb
-            .build()
-            .map_err(|e| OhMyGrepError::Io(format!("type filter error: {e}")))?;
+        let types = tb.build().map_err(|e| invalid("file type", &e))?;
         wb.types(types);
     }
 
     if !req.include_globs.is_empty() || !req.exclude_globs.is_empty() {
         let mut ob = OverrideBuilder::new(first);
         for g in &req.include_globs {
-            ob.add(g)
-                .map_err(|e| OhMyGrepError::Io(format!("glob error: {e}")))?;
+            ob.add(g).map_err(|e| invalid("glob", &e))?;
         }
         for g in &req.exclude_globs {
-            ob.add(&format!("!{g}"))
-                .map_err(|e| OhMyGrepError::Io(format!("glob error: {e}")))?;
+            ob.add(&format!("!{g}")).map_err(|e| invalid("glob", &e))?;
         }
-        let overrides = ob
-            .build()
-            .map_err(|e| OhMyGrepError::Io(format!("override error: {e}")))?;
+        let overrides = ob.build().map_err(|e| invalid("glob", &e))?;
         wb.overrides(overrides);
     }
 

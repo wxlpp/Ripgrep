@@ -8,6 +8,15 @@ final class ErrorTests: XCTestCase {
         XCTAssertTrue(e.message.contains("["))
     }
 
+    func testFFIErrorPrefixIsNotDoubled() async throws {
+        do {
+            _ = try await OhMyGrep.search(pattern: "x", in: ["/nonexistent-ohmygrep-path"])
+            XCTFail("expected throw")
+        } catch let e as OhMyGrep.Error {
+            XCTAssertEqual(e.message, "path not found: /nonexistent-ohmygrep-path")
+        }
+    }
+
     func testInvalidArgumentsCarriesMessage() {
         let e = OhMyGrep.Error.invalidArguments(message: "missing pattern")
         XCTAssertEqual(e.message, "missing pattern")

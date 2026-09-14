@@ -8,6 +8,7 @@ final class OptionsTests: XCTestCase {
         XCTAssertFalse(o.smartCase)        // matches rg CLI default
         XCTAssertFalse(o.multiline)
         XCTAssertTrue(o.respectGitignore)
+        XCTAssertTrue(o.requireGit)
         XCTAssertFalse(o.includeHidden)
         XCTAssertEqual(o.beforeContext, 0)
         XCTAssertEqual(o.afterContext, 0)
@@ -25,7 +26,7 @@ final class OptionsTests: XCTestCase {
         let o = OhMyGrep.Options(
             caseInsensitive: true, smartCase: true, multiline: true,
             include: ["*.swift"], exclude: ["*.md"], fileTypes: ["rust"],
-            respectGitignore: false, includeHidden: true,
+            respectGitignore: false, requireGit: false, includeHidden: true,
             beforeContext: 1, afterContext: 2,
             maxMatches: 3, maxFiles: 4, maxFileSizeBytes: 5,
             timeout: .milliseconds(6), searchBinary: true)
