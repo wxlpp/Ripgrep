@@ -3,9 +3,12 @@
 uniffi::setup_scaffolding!();
 
 mod cancel;
+mod columns;
 mod error;
 mod options;
 mod search;
+mod session;
+mod shared;
 mod sink;
 mod warnings;
 
@@ -36,6 +39,9 @@ mod cancel_preserves_pending_matches_tests;
 #[path = "tests/cancel_tests.rs"]
 mod cancel_tests;
 #[cfg(test)]
+#[path = "tests/columns_tests.rs"]
+mod columns_tests;
+#[cfg(test)]
 #[path = "tests/context_tests.rs"]
 mod context_tests;
 #[cfg(test)]
@@ -47,6 +53,9 @@ mod external_cancel_tests;
 #[cfg(test)]
 #[path = "tests/ffi_export_smoke.rs"]
 mod ffi_export_smoke;
+#[cfg(test)]
+#[path = "tests/limits_and_session_tests.rs"]
+mod limits_and_session_tests;
 #[cfg(test)]
 #[path = "tests/limits_tests.rs"]
 mod limits_tests;

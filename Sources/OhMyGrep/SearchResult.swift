@@ -13,14 +13,37 @@ extension OhMyGrep {
         public let line: String
         public let beforeContext: [String]
         public let afterContext: [String]
+        /// Byte offsets into the raw bytes behind `line` (which is lossily decoded), not into the original line.
         public let submatches: [Submatch]
+        /// Byte offset of `line` within the original line; non-zero only when a long
+        /// line was cut to a window around its first match.
+        public let lineOffset: Int
+        /// `line` was cut because it exceeded `Options.maxColumns`.
+        public let lineTruncated: Bool
 
         public init(path: String, lineNumber: Int, line: String,
                     beforeContext: [String], afterContext: [String],
-                    submatches: [Submatch]) {
+                    submatches: [Submatch], lineOffset: Int = 0, lineTruncated: Bool = false) {
             self.path = path; self.lineNumber = lineNumber; self.line = line
             self.beforeContext = beforeContext; self.afterContext = afterContext
             self.submatches = submatches
+            self.lineOffset = lineOffset; self.lineTruncated = lineTruncated
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case path, lineNumber, line, beforeContext, afterContext, submatches, lineOffset, lineTruncated
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            path = try c.decode(String.self, forKey: .path)
+            lineNumber = try c.decode(Int.self, forKey: .lineNumber)
+            line = try c.decode(String.self, forKey: .line)
+            beforeContext = try c.decode([String].self, forKey: .beforeContext)
+            afterContext = try c.decode([String].self, forKey: .afterContext)
+            submatches = try c.decode([Submatch].self, forKey: .submatches)
+            lineOffset = try c.decodeIfPresent(Int.self, forKey: .lineOffset) ?? 0
+            lineTruncated = try c.decodeIfPresent(Bool.self, forKey: .lineTruncated) ?? false
         }
     }
 

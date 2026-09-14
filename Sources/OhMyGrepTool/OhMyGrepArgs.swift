@@ -58,6 +58,9 @@ struct OhMyGrepArgs: ParsableCommand {
     @Option(name: .customLong("timeout-ms"))
     var timeoutMs: Int?
 
+    @Option(name: [.customShort("M"), .customLong("max-columns")])
+    var maxColumns: Int?
+
     @Flag(name: .customLong("json"))
     var json: Bool = false
 
