@@ -1,0 +1,4 @@
+module OhMyGrepCoreFFI {
+    header "OhMyGrepCoreFFI.h"
+    export *
+}

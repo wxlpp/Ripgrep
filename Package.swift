@@ -2,37 +2,37 @@
 import PackageDescription
 
 let package = Package(
-    name: "RipgrepKit",
+    name: "OhMyGrep",
     platforms: [.iOS(.v16), .macOS(.v13)],
     products: [
-        .library(name: "RipgrepKitCore", targets: ["RipgrepKitCore"]),
-        .library(name: "RipgrepKitTool", targets: ["RipgrepKitTool"]),
+        .library(name: "OhMyGrep", targets: ["OhMyGrep"]),
+        .library(name: "OhMyGrepTool", targets: ["OhMyGrepTool"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
     ],
     targets: [
         .binaryTarget(
-            name: "RipgrepCore",
-            path: "Frameworks/RipgrepCore.xcframework"
+            name: "OhMyGrepCore",
+            path: "Frameworks/OhMyGrepCore.xcframework"
         ),
-        .target(name: "RipgrepKitFFI",
-                dependencies: ["RipgrepCore"],
-                sources: ["RipgrepCore.swift"],
+        .target(name: "OhMyGrepFFI",
+                dependencies: ["OhMyGrepCore"],
+                sources: ["OhMyGrepCore.swift"],
                 swiftSettings: [.swiftLanguageMode(.v5)]),
-        .target(name: "RipgrepKitCore", dependencies: ["RipgrepKitFFI"]),
-        .target(name: "RipgrepKitTool", dependencies: [
-            "RipgrepKitCore",
+        .target(name: "OhMyGrep", dependencies: ["OhMyGrepFFI"]),
+        .target(name: "OhMyGrepTool", dependencies: [
+            "OhMyGrep",
             .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]),
         .testTarget(
-            name: "RipgrepKitCoreTests",
-            dependencies: ["RipgrepKitCore"],
+            name: "OhMyGrepTests",
+            dependencies: ["OhMyGrep"],
             resources: [.copy("Fixtures")]
         ),
         .testTarget(
-            name: "RipgrepKitToolTests",
-            dependencies: ["RipgrepKitTool", "RipgrepKitCore"],
+            name: "OhMyGrepToolTests",
+            dependencies: ["OhMyGrepTool", "OhMyGrep"],
             resources: [.copy("Fixtures")]
         ),
     ],

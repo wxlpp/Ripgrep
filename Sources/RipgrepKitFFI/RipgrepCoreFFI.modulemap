@@ -1,4 +1,0 @@
-module RipgrepCoreFFI {
-    header "RipgrepCoreFFI.h"
-    export *
-}

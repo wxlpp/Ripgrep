@@ -2,10 +2,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-CRATE="ripgrep_core"
-LIB_NAME="libripgrep_core.a"
-FRAMEWORK_NAME="RipgrepCoreFFI"
-XCFRAMEWORK_NAME="RipgrepCore"
+CRATE="ohmygrep_core"
+LIB_NAME="libohmygrep_core.a"
+FRAMEWORK_NAME="OhMyGrepCoreFFI"
+XCFRAMEWORK_NAME="OhMyGrepCore"
 BUILD_DIR="build/xcframework"
 LIPO_DIR="build/lipo"
 OUT="Frameworks/${XCFRAMEWORK_NAME}.xcframework"
@@ -30,10 +30,10 @@ stage_framework() {
     mkdir -p "$fw_dir/Headers" "$fw_dir/Modules"
 
     cp "$lib_path" "$fw_dir/$FRAMEWORK_NAME"
-    cp "Sources/RipgrepKitFFI/RipgrepCoreFFI.h" "$fw_dir/Headers/"
+    cp "Sources/OhMyGrepFFI/OhMyGrepCoreFFI.h" "$fw_dir/Headers/"
     cat > "$fw_dir/Modules/module.modulemap" <<'EOF'
-framework module RipgrepCoreFFI {
-    umbrella header "RipgrepCoreFFI.h"
+framework module OhMyGrepCoreFFI {
+    umbrella header "OhMyGrepCoreFFI.h"
     export *
     module * { export * }
 }
@@ -44,7 +44,7 @@ EOF
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key><string>$FRAMEWORK_NAME</string>
-    <key>CFBundleIdentifier</key><string>com.ripgrep.RipgrepCoreFFI</string>
+    <key>CFBundleIdentifier</key><string>dev.wxlpp.OhMyGrepCoreFFI</string>
     <key>CFBundleName</key><string>$FRAMEWORK_NAME</string>
     <key>CFBundlePackageType</key><string>FMWK</string>
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
@@ -55,8 +55,8 @@ EOF
     echo "$fw_dir"
 }
 
-[[ -f "Sources/RipgrepKitFFI/RipgrepCoreFFI.h" ]] || \
-  { echo "ERROR: Sources/RipgrepKitFFI/RipgrepCoreFFI.h missing. Run scripts/generate-bindings.sh first." >&2; exit 1; }
+[[ -f "Sources/OhMyGrepFFI/OhMyGrepCoreFFI.h" ]] || \
+  { echo "ERROR: Sources/OhMyGrepFFI/OhMyGrepCoreFFI.h missing. Run scripts/generate-bindings.sh first." >&2; exit 1; }
 
 # Build all 5 Rust target triples
 build_static "aarch64-apple-darwin"

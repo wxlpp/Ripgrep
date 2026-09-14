@@ -2,7 +2,7 @@ target/
 .build/
 .swiftpm/
 DerivedData/
-Frameworks/RipgrepCore.xcframework/
+Frameworks/OhMyGrepCore.xcframework/
 build/
 *.xcuserdata
 *.xcworkspace
