@@ -35,11 +35,9 @@ extension Duration {
 }
 
 extension OhMyGrep {
-    /// - Note: `Codable` uses synthesized coding keys. A future **non-optional**
-    ///   field would break decoding of v0.1.0-encoded JSON (keyNotFound). Add
-    ///   such fields as optional, or provide a custom `init(from:)` using
-    ///   `decodeIfPresent` with a default, to preserve backward compatibility.
-    public struct Options: Codable, Sendable {
+    /// Search options. Decoding tolerates missing keys (they take the `init()`
+    /// defaults); an explicit `null` for an optional limit means "no limit".
+    public struct Options: Codable, Sendable, Equatable {
         public var caseInsensitive: Bool
         public var smartCase: Bool
         public var multiline: Bool
@@ -54,6 +52,8 @@ extension OhMyGrep {
         public var maxFiles: Int?
         public var maxFileSizeBytes: Int?
         public var timeout: Duration?
+        /// Search files containing NUL bytes as text; by default they are skipped.
+        public var searchBinary: Bool
 
         public init(
             caseInsensitive: Bool = false,
@@ -69,7 +69,8 @@ extension OhMyGrep {
             maxMatches: Int? = nil,
             maxFiles: Int? = nil,
             maxFileSizeBytes: Int? = nil,
-            timeout: Duration? = nil
+            timeout: Duration? = nil,
+            searchBinary: Bool = false
         ) {
             self.caseInsensitive = caseInsensitive
             self.smartCase = smartCase
@@ -85,15 +86,65 @@ extension OhMyGrep {
             self.maxFiles = maxFiles
             self.maxFileSizeBytes = maxFileSizeBytes
             self.timeout = timeout
+            self.searchBinary = searchBinary
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case caseInsensitive, smartCase, multiline, include, exclude, fileTypes
+            case respectGitignore, includeHidden, beforeContext, afterContext
+            case maxMatches, maxFiles, maxFileSizeBytes, timeout, searchBinary
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            let d = Options()
+            func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) throws -> T {
+                try c.decodeIfPresent(T.self, forKey: key) ?? fallback
+            }
+            func optional<T: Decodable>(_ key: CodingKeys, _ fallback: T?) throws -> T? {
+                c.contains(key) ? try c.decodeIfPresent(T.self, forKey: key) : fallback
+            }
+            caseInsensitive = try value(.caseInsensitive, d.caseInsensitive)
+            smartCase = try value(.smartCase, d.smartCase)
+            multiline = try value(.multiline, d.multiline)
+            include = try value(.include, d.include)
+            exclude = try value(.exclude, d.exclude)
+            fileTypes = try value(.fileTypes, d.fileTypes)
+            respectGitignore = try value(.respectGitignore, d.respectGitignore)
+            includeHidden = try value(.includeHidden, d.includeHidden)
+            beforeContext = try value(.beforeContext, d.beforeContext)
+            afterContext = try value(.afterContext, d.afterContext)
+            maxMatches = try optional(.maxMatches, d.maxMatches)
+            maxFiles = try optional(.maxFiles, d.maxFiles)
+            maxFileSizeBytes = try optional(.maxFileSizeBytes, d.maxFileSizeBytes)
+            timeout = try optional(.timeout, d.timeout)
+            searchBinary = try value(.searchBinary, d.searchBinary)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(caseInsensitive, forKey: .caseInsensitive)
+            try c.encode(smartCase, forKey: .smartCase)
+            try c.encode(multiline, forKey: .multiline)
+            try c.encode(include, forKey: .include)
+            try c.encode(exclude, forKey: .exclude)
+            try c.encode(fileTypes, forKey: .fileTypes)
+            try c.encode(respectGitignore, forKey: .respectGitignore)
+            try c.encode(includeHidden, forKey: .includeHidden)
+            try c.encode(beforeContext, forKey: .beforeContext)
+            try c.encode(afterContext, forKey: .afterContext)
+            // Optional limits encode `null` explicitly so nil survives a round trip.
+            try c.encode(maxMatches, forKey: .maxMatches)
+            try c.encode(maxFiles, forKey: .maxFiles)
+            try c.encode(maxFileSizeBytes, forKey: .maxFileSizeBytes)
+            try c.encode(timeout, forKey: .timeout)
+            try c.encode(searchBinary, forKey: .searchBinary)
         }
     }
 }
 
 extension OhMyGrep.Options {
-    // Throws (not `precondition`) on out-of-range fields: `Options` is a public
-    // `Codable` value, so a JSON-decoded / hand-constructed instance with a
-    // negative or overflowing field must be a recoverable error, not a
-    // host-process trap (UInt32.init traps on overflow for 64-bit Int values).
+    // Throws rather than trapping: decoded or hand-built values can be out of range.
     func toFFI(pattern: String, paths: [String]) throws(OhMyGrep.Error) -> SearchRequest {
         guard (0...Int(UInt32.max)).contains(beforeContext) else {
             throw .invalidArguments(
@@ -147,7 +198,8 @@ extension OhMyGrep.Options {
             afterContext: UInt32(afterContext),
             maxMatches: ffiMaxMatches,
             maxFiles: ffiMaxFiles,
-            maxFileSizeBytes: ffiMaxFileSizeBytes
+            maxFileSizeBytes: ffiMaxFileSizeBytes,
+            searchBinary: searchBinary
         )
     }
 }

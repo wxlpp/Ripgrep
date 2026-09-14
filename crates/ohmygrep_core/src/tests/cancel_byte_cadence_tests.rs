@@ -48,7 +48,6 @@ fn byte_cadence_stops_on_giant_lines() {
         Arc::clone(&counter),
         matcher.clone(),
         0,
-        0,
     );
 
     let result = SearcherBuilder::new()

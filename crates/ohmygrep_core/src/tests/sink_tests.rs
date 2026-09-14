@@ -16,8 +16,7 @@ fn sink_emits_match_per_line() {
         crate::cancel::CancelToken::new(None),
         Arc::clone(&counter),
         m.clone(),
-        0, // before_context
-        0, // after_context
+        0,
     );
     let body = b"foo\nbar\nfoo\n";
     SearcherBuilder::new()

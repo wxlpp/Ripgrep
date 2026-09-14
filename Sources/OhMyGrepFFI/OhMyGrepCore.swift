@@ -736,10 +736,11 @@ public struct SearchRequest {
     public var maxMatches: UInt32?
     public var maxFiles: UInt32?
     public var maxFileSizeBytes: UInt64?
+    public var searchBinary: Bool
 
     /// Default memberwise initializers are never public by default, so we
     /// declare one manually.
-    public init(pattern: String, paths: [String], caseInsensitive: Bool, smartCase: Bool, multiline: Bool, includeGlobs: [String], excludeGlobs: [String], fileTypes: [String], respectGitignore: Bool, includeHidden: Bool, beforeContext: UInt32, afterContext: UInt32, maxMatches: UInt32?, maxFiles: UInt32?, maxFileSizeBytes: UInt64?) {
+    public init(pattern: String, paths: [String], caseInsensitive: Bool, smartCase: Bool, multiline: Bool, includeGlobs: [String], excludeGlobs: [String], fileTypes: [String], respectGitignore: Bool, includeHidden: Bool, beforeContext: UInt32, afterContext: UInt32, maxMatches: UInt32?, maxFiles: UInt32?, maxFileSizeBytes: UInt64?, searchBinary: Bool) {
         self.pattern = pattern
         self.paths = paths
         self.caseInsensitive = caseInsensitive
@@ -755,6 +756,7 @@ public struct SearchRequest {
         self.maxMatches = maxMatches
         self.maxFiles = maxFiles
         self.maxFileSizeBytes = maxFileSizeBytes
+        self.searchBinary = searchBinary
     }
 }
 
@@ -805,6 +807,9 @@ extension SearchRequest: Equatable, Hashable {
         if lhs.maxFileSizeBytes != rhs.maxFileSizeBytes {
             return false
         }
+        if lhs.searchBinary != rhs.searchBinary {
+            return false
+        }
         return true
     }
 
@@ -824,6 +829,7 @@ extension SearchRequest: Equatable, Hashable {
         hasher.combine(maxMatches)
         hasher.combine(maxFiles)
         hasher.combine(maxFileSizeBytes)
+        hasher.combine(searchBinary)
     }
 }
 
@@ -848,7 +854,8 @@ public struct FfiConverterTypeSearchRequest: FfiConverterRustBuffer {
                 afterContext: FfiConverterUInt32.read(from: &buf),
                 maxMatches: FfiConverterOptionUInt32.read(from: &buf),
                 maxFiles: FfiConverterOptionUInt32.read(from: &buf),
-                maxFileSizeBytes: FfiConverterOptionUInt64.read(from: &buf)
+                maxFileSizeBytes: FfiConverterOptionUInt64.read(from: &buf),
+                searchBinary: FfiConverterBool.read(from: &buf)
             )
     }
 
@@ -868,6 +875,7 @@ public struct FfiConverterTypeSearchRequest: FfiConverterRustBuffer {
         FfiConverterOptionUInt32.write(value.maxMatches, into: &buf)
         FfiConverterOptionUInt32.write(value.maxFiles, into: &buf)
         FfiConverterOptionUInt64.write(value.maxFileSizeBytes, into: &buf)
+        FfiConverterBool.write(value.searchBinary, into: &buf)
     }
 }
 

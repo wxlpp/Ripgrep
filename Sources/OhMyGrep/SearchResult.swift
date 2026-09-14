@@ -38,25 +38,40 @@ extension OhMyGrep {
             self.elapsed = elapsed
         }
 
-        /// - Note: Does NOT deduplicate overlapping context between adjacent
-        ///   same-file matches (unlike `rg`, which inserts `--` separators and
-        ///   merges overlapping windows). Acceptable for the v0.1.0 LLM-tool
-        ///   contract; revisit if exact rg-parity text output is required.
-        public func formattedAsText() -> String {
+        /// Renders like `rg --no-heading -n -H`: `path:line:text` for each matched
+        /// line (multiline matches get one row per line), `path-line-text` for
+        /// context, and `--` between non-adjacent groups.
+        ///
+        /// - Parameter contextSeparators: emit `--` separators, as rg does when
+        ///   `-A`/`-B`/`-C` is set. `nil` infers it from whether any match has context.
+        public func formattedAsText(contextSeparators: Bool? = nil) -> String {
+            let separate = contextSeparators
+                ?? matches.contains { !$0.beforeContext.isEmpty || !$0.afterContext.isEmpty }
             var lines: [String] = []
-            var lastPath: String? = nil
+            var last: (path: String, line: Int)? = nil
             for m in matches {
-                if let lp = lastPath, lp != m.path { lines.append("") }
-                lastPath = m.path
-                let baseLine = m.lineNumber
-                for (i, b) in m.beforeContext.enumerated() {
-                    let ln = baseLine - (m.beforeContext.count - i)
-                    lines.append("\(m.path)-\(ln)-\(b)")
+                // Split on scalars: Swift treats "\r\n" as one Character, not "\n".
+                let matchLines = m.line.unicodeScalars
+                    .split(separator: "\n", omittingEmptySubsequences: false)
+                    .map { row -> String in
+                        var row = String.UnicodeScalarView(row)
+                        if row.last == "\r" { row.removeLast() }
+                        return String(row)
+                    }
+                let firstLine = m.lineNumber - m.beforeContext.count
+                let lastMatchLine = m.lineNumber + matchLines.count - 1
+                if separate, let last, last.path != m.path || firstLine > last.line + 1 {
+                    lines.append("--")
                 }
-                lines.append("\(m.path):\(baseLine):\(m.line)")
+                last = (m.path, lastMatchLine + m.afterContext.count)
+                for (i, b) in m.beforeContext.enumerated() {
+                    lines.append("\(m.path)-\(firstLine + i)-\(b)")
+                }
+                for (i, text) in matchLines.enumerated() {
+                    lines.append("\(m.path):\(m.lineNumber + i):\(text)")
+                }
                 for (i, a) in m.afterContext.enumerated() {
-                    let ln = baseLine + i + 1
-                    lines.append("\(m.path)-\(ln)-\(a)")
+                    lines.append("\(m.path)-\(lastMatchLine + i + 1)-\(a)")
                 }
             }
             return lines.joined(separator: "\n")

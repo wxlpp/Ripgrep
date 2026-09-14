@@ -15,7 +15,7 @@ use crate::cancel::CancelToken;
 use crate::options::{SearchMatch, SearchResult};
 use crate::sink::ChannelSink;
 use crossbeam_channel::unbounded;
-use grep_searcher::SearcherBuilder;
+use grep_searcher::{BinaryDetection, SearcherBuilder};
 use ignore::WalkState;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -62,17 +62,9 @@ fn search_blocking_inner(
     let walker = build_walker(&req)?.build_parallel();
 
     let (tx, rx) = unbounded::<SearchMatch>();
-    // match_counter/file_counter are bound/count-only atomics: nothing else is
-    // published through them (matches flow via the crossbeam channel). Relaxed
-    // is correct and sufficient — single-location coherence guarantees loads
-    // observe the latest increment promptly, so the walker Quits on >= max
-    // without delay. The residual overshoot (parallel workers each passing the
-    // < max check before peers' fetch_add is observed) is an inherent
-    // check-then-act race that Acquire/Release does NOT serialize; result
-    // correctness under overshoot is guaranteed by the post-truncation below
-    // (>= max, not >: collecting exactly max means the limit was hit, so
-    // truncate + flag truncated; also clamps parallel-walker overshoot).
-    // Do NOT "upgrade" these to Acquire/Release — it changes nothing here.
+    // Counters only bound the walk; parallel workers may overshoot a limit, and
+    // the truncation after collection is what makes results exact. Stronger
+    // orderings would not remove that check-then-act race.
     let match_counter = Arc::new(AtomicUsize::new(0));
     let file_counter = Arc::new(AtomicUsize::new(0));
 
@@ -81,6 +73,11 @@ fn search_blocking_inner(
     let before = req.before_context as usize;
     let after = req.after_context as usize;
     let multiline = req.multiline;
+    let binary_detection = if req.search_binary {
+        BinaryDetection::none()
+    } else {
+        BinaryDetection::quit(b'\x00')
+    };
 
     walker.run(|| {
         let tx = tx.clone();
@@ -88,6 +85,7 @@ fn search_blocking_inner(
         let match_counter = Arc::clone(&match_counter);
         let file_counter = Arc::clone(&file_counter);
         let matcher = matcher.clone();
+        let binary_detection = binary_detection.clone();
         Box::new(move |entry| {
             if cancel.is_cancelled() {
                 return WalkState::Quit;
@@ -119,13 +117,13 @@ fn search_blocking_inner(
                 Arc::clone(&match_counter),
                 matcher.clone(),
                 before,
-                after,
             );
             let mut sb = SearcherBuilder::new();
             sb.line_number(true);
             sb.before_context(before);
             sb.after_context(after);
             sb.multi_line(multiline);
+            sb.binary_detection(binary_detection.clone());
             let _ = sb.build().search_path(&matcher, entry.path(), &mut sink);
             WalkState::Continue
         })

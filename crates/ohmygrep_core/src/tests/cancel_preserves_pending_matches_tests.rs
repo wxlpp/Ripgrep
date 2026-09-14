@@ -44,8 +44,7 @@ fn cancel_ok_false_preserves_matches_collected_before_cancel() {
         cancel,
         Arc::clone(&counter),
         matcher.clone(),
-        0, // before_context
-        0, // after_context
+        0,
     );
 
     // search_slice returns Ok(()) when the Sink returns Ok(false) (graceful stop);
@@ -114,7 +113,6 @@ fn cancel_ok_false_search_slice_returns_ok_not_err() {
         cancel,
         Arc::clone(&counter),
         matcher.clone(),
-        0,
         0,
     );
 

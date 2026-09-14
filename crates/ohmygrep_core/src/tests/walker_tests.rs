@@ -5,19 +5,8 @@ fn req() -> SearchRequest {
     SearchRequest {
         pattern: "TODO".into(),
         paths: vec!["tests/fixtures/mini".into()],
-        case_insensitive: false,
-        smart_case: false,
-        multiline: false,
-        include_globs: vec![],
-        exclude_globs: vec![],
-        file_types: vec![],
         respect_gitignore: true,
-        include_hidden: false,
-        before_context: 0,
-        after_context: 0,
-        max_matches: None,
-        max_files: None,
-        max_file_size_bytes: None,
+        ..Default::default()
     }
 }
 
