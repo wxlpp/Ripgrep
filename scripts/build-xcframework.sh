@@ -1,94 +1,47 @@
 #!/usr/bin/env bash
+# Builds Frameworks/OhMyGrepCore.xcframework from static libraries (no .framework
+# wrappers), so Xcode links the code into the app and embeds nothing.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CRATE="ohmygrep_core"
 LIB_NAME="libohmygrep_core.a"
-FRAMEWORK_NAME="OhMyGrepCoreFFI"
-XCFRAMEWORK_NAME="OhMyGrepCore"
+MODULE_NAME="OhMyGrepCoreFFI"
+OUT="Frameworks/OhMyGrepCore.xcframework"
 BUILD_DIR="build/xcframework"
-LIPO_DIR="build/lipo"
-OUT="Frameworks/${XCFRAMEWORK_NAME}.xcframework"
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}"
-VERSION="${VERSION:-0.1.0}"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
 export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-16.0}"
 
-rm -rf build "$OUT"
-mkdir -p "$BUILD_DIR"
+HEADER="Sources/OhMyGrepFFI/${MODULE_NAME}.h"
+[[ -f "$HEADER" ]] || { echo "ERROR: $HEADER missing. Run scripts/generate-bindings.sh first." >&2; exit 1; }
 
-build_static() {
-    local triple="$1"
+rm -rf build "$OUT"
+mkdir -p "$BUILD_DIR/headers"
+cp "$HEADER" "$BUILD_DIR/headers/"
+cat > "$BUILD_DIR/headers/module.modulemap" <<EOF
+module ${MODULE_NAME} {
+    header "${MODULE_NAME}.h"
+    export *
+}
+EOF
+
+for triple in aarch64-apple-darwin x86_64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios; do
     echo "Building $CRATE for $triple..."
     cargo build -p "$CRATE" --release --target "$triple"
-}
+done
 
-stage_framework() {
-    local lib_path="$1"
-    local slice_name="$2"
-    local fw_dir="$BUILD_DIR/$slice_name/$FRAMEWORK_NAME.framework"
-    mkdir -p "$fw_dir/Headers" "$fw_dir/Modules"
+lib() { echo "${CARGO_TARGET_DIR}/$1/release/$LIB_NAME"; }
 
-    cp "$lib_path" "$fw_dir/$FRAMEWORK_NAME"
-    cp "Sources/OhMyGrepFFI/OhMyGrepCoreFFI.h" "$fw_dir/Headers/"
-    cat > "$fw_dir/Modules/module.modulemap" <<'EOF'
-framework module OhMyGrepCoreFFI {
-    umbrella header "OhMyGrepCoreFFI.h"
-    export *
-    module * { export * }
-}
-EOF
-    cat > "$fw_dir/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key><string>$FRAMEWORK_NAME</string>
-    <key>CFBundleIdentifier</key><string>dev.wxlpp.OhMyGrepCoreFFI</string>
-    <key>CFBundleName</key><string>$FRAMEWORK_NAME</string>
-    <key>CFBundlePackageType</key><string>FMWK</string>
-    <key>CFBundleShortVersionString</key><string>$VERSION</string>
-    <key>CFBundleVersion</key><string>1</string>
-</dict>
-</plist>
-EOF
-    echo "$fw_dir"
-}
-
-[[ -f "Sources/OhMyGrepFFI/OhMyGrepCoreFFI.h" ]] || \
-  { echo "ERROR: Sources/OhMyGrepFFI/OhMyGrepCoreFFI.h missing. Run scripts/generate-bindings.sh first." >&2; exit 1; }
-
-# Build all 5 Rust target triples
-build_static "aarch64-apple-darwin"
-build_static "x86_64-apple-darwin"
-build_static "aarch64-apple-ios"
-build_static "aarch64-apple-ios-sim"
-build_static "x86_64-apple-ios"
-
-# lipo macOS arm64 + x86_64 into a fat binary
-mkdir -p "$LIPO_DIR/macos"
-lipo -create \
-    "${CARGO_TARGET_DIR}/aarch64-apple-darwin/release/$LIB_NAME" \
-    "${CARGO_TARGET_DIR}/x86_64-apple-darwin/release/$LIB_NAME" \
-    -output "$LIPO_DIR/macos/$LIB_NAME"
-
-# lipo iOS simulator arm64 + x86_64 into a fat binary
-mkdir -p "$LIPO_DIR/ios-sim"
-lipo -create \
-    "${CARGO_TARGET_DIR}/aarch64-apple-ios-sim/release/$LIB_NAME" \
-    "${CARGO_TARGET_DIR}/x86_64-apple-ios/release/$LIB_NAME" \
-    -output "$LIPO_DIR/ios-sim/$LIB_NAME"
-
-# Stage 3 slices (distinct slice_names avoid collisions in $BUILD_DIR)
-MAC_FW=$(stage_framework "$LIPO_DIR/macos/$LIB_NAME" "macos")
-IOS_FW=$(stage_framework "${CARGO_TARGET_DIR}/aarch64-apple-ios/release/$LIB_NAME" "ios-arm64")
-SIM_FW=$(stage_framework "$LIPO_DIR/ios-sim/$LIB_NAME" "ios-sim")
+mkdir -p "$BUILD_DIR/macos" "$BUILD_DIR/ios-sim" "$BUILD_DIR/ios"
+lipo -create "$(lib aarch64-apple-darwin)" "$(lib x86_64-apple-darwin)" -output "$BUILD_DIR/macos/$LIB_NAME"
+lipo -create "$(lib aarch64-apple-ios-sim)" "$(lib x86_64-apple-ios)" -output "$BUILD_DIR/ios-sim/$LIB_NAME"
+cp "$(lib aarch64-apple-ios)" "$BUILD_DIR/ios/$LIB_NAME"
 
 xcodebuild -create-xcframework \
-    -framework "$MAC_FW" \
-    -framework "$IOS_FW" \
-    -framework "$SIM_FW" \
+    -library "$BUILD_DIR/macos/$LIB_NAME" -headers "$BUILD_DIR/headers" \
+    -library "$BUILD_DIR/ios/$LIB_NAME" -headers "$BUILD_DIR/headers" \
+    -library "$BUILD_DIR/ios-sim/$LIB_NAME" -headers "$BUILD_DIR/headers" \
     -output "$OUT"
 
 echo "Built: $OUT"
-ls -la "$OUT"
