@@ -1,38 +1,102 @@
 name: Release
 
+# Manual: builds and tests the XCFramework, then tags a release commit (not pushed
+# to main) whose Package.swift points at the uploaded zip and its checksum.
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, X.Y.Z (no v prefix)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: macos-14
+  release:
+    runs-on: macos-15
+    env:
+      VERSION: ${{ inputs.version }}
+      # Release binaries are built with a fixed compiler so they are reproducible.
+      RUST_TOOLCHAIN: "1.96.0"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
 
-      - name: Install Rust targets
+      - name: Validate version
         run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version must be X.Y.Z"; exit 1; }
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "::error::tag $VERSION already exists"; exit 1
+          fi
+
+      - name: Install pinned Rust toolchain and targets
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
           rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios \
                             aarch64-apple-darwin x86_64-apple-darwin
 
-      - name: Build XCFramework
-        run: bash scripts/build-xcframework.sh
-
-      - name: Generate Swift bindings
-        run: bash scripts/generate-bindings.sh
-
-      - name: Run tests
+      - name: Check generated bindings are up to date
         run: |
-          cargo test -p ohmygrep_core
-          swift test
+          bash scripts/generate-bindings.sh
+          git diff --exit-code -- Sources/OhMyGrepFFI
+          test -z "$(git status --porcelain -- Sources/OhMyGrepFFI)"
 
-      - name: Package release
+      - name: Rust tests
+        run: cargo test --locked -p ohmygrep_core
+
+      - name: Build and package XCFramework
         run: bash scripts/package-release.sh
 
-      - name: Create release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/OhMyGrepCore.xcframework.zip
-            dist/OhMyGrepCore.xcframework.zip.sha256
-          generate_release_notes: true
+      - name: Swift tests
+        run: swift test
+
+      - name: Point Package.swift at the release
+        run: bash scripts/set-release.sh "$VERSION" "$(cat dist/OhMyGrepCore.xcframework.zip.sha256)"
+
+      - name: Commit and push the release tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Only the manifest may change; anything else means the build mutated the tree.
+          git diff --exit-code -- . ':!Package.swift'
+          git add Package.swift
+          git commit -m "Release $VERSION"
+          git tag "$VERSION"
+          # Only the tag is pushed: main keeps building against the local XCFramework.
+          git push origin "refs/tags/$VERSION"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$VERSION" \
+            dist/OhMyGrepCore.xcframework.zip \
+            dist/OhMyGrepCore.xcframework.zip.sha256 \
+            --verify-tag --title "$VERSION" --generate-notes
+
+      - name: Verify a consumer can resolve the release
+        run: |
+          consumer="$RUNNER_TEMP/consumer"
+          mkdir -p "$consumer/Sources/Consumer"
+          cat > "$consumer/Package.swift" <<EOF
+          // swift-tools-version:6.0
+          import PackageDescription
+          let package = Package(
+              name: "Consumer",
+              platforms: [.macOS(.v13), .iOS(.v16)],
+              dependencies: [.package(url: "https://github.com/${GITHUB_REPOSITORY}", exact: "$VERSION")],
+              targets: [.target(name: "Consumer", dependencies: [.product(name: "OhMyGrep", package: "oh-my-grep")])]
+          )
+          EOF
+          echo 'import OhMyGrep' > "$consumer/Sources/Consumer/Consumer.swift"
+          swift build --package-path "$consumer"
+          (cd "$consumer" && xcodebuild -scheme Consumer-Package -destination 'generic/platform=iOS' build)
