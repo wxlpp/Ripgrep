@@ -25,13 +25,20 @@ impl Warnings {
     }
 
     pub fn push_walk_error(&self, err: &ignore::Error) {
+        if let ignore::Error::Partial(errs) = err {
+            errs.iter().for_each(|e| self.push_walk_error(e));
+            return;
+        }
         let (path, message) = split_walk_error(err);
         self.push(path, message);
     }
 
+    /// Sorted by path, with the overflow note (if any) last. Which warnings are
+    /// kept past the cap depends on parallel walk order.
     pub fn take(&self) -> Vec<SearchWarning> {
         let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let (mut list, dropped) = std::mem::take(&mut *guard);
+        list.sort_by(|a, b| a.path.cmp(&b.path));
         if dropped > 0 {
             list.push(SearchWarning {
                 path: String::new(),
@@ -42,7 +49,7 @@ impl Warnings {
     }
 }
 
-/// Peels path/depth/line wrappers so the path is reported once, not repeated in the message.
+/// Peels path/depth wrappers so the path is reported once, not repeated in the message.
 fn split_walk_error(err: &ignore::Error) -> (String, String) {
     match err {
         ignore::Error::WithPath { path, err } => {
@@ -50,7 +57,6 @@ fn split_walk_error(err: &ignore::Error) -> (String, String) {
             (display(path), message)
         }
         ignore::Error::WithDepth { err, .. } => split_walk_error(err),
-        ignore::Error::Loop { child, .. } => (display(child), err.to_string()),
         _ => (String::new(), err.to_string()),
     }
 }

@@ -15,20 +15,30 @@ extension OhMyGrep {
         try await runParsed(parse(args), workingDirectory: workingDirectory)
     }
 
-    static func resolve(_ paths: [String], against workingDirectory: String?) throws(OhMyGrep.Error) -> [String] {
+    /// Joins relative paths onto `workingDirectory` textually, without resolving
+    /// symlinks or `..`, so output paths keep the caller's prefix (e.g. `/private/var`).
+    static func resolve(
+        _ paths: [String], explicit: Bool, against workingDirectory: String?
+    ) throws(OhMyGrep.Error) -> [String] {
         try paths.map { (path: String) throws(OhMyGrep.Error) -> String in
+            if path.isEmpty { throw .invalidArguments(message: "empty path") }
+            if path.hasPrefix("~") {
+                throw .invalidArguments(message: "'~' is not expanded; use an absolute path: \(path)")
+            }
             if path.hasPrefix("/") { return path }
             guard let base = workingDirectory else {
-                throw .invalidArguments(
-                    message: "relative path '\(path)' needs a workingDirectory")
+                throw .invalidArguments(message: explicit
+                    ? "relative path '\(path)' needs a workingDirectory"
+                    : "no path given; pass a workingDirectory or an absolute path")
             }
-            return URL(fileURLWithPath: base, isDirectory: true)
-                .appendingPathComponent(path).standardizedFileURL.path
+            let trimmed = base.hasSuffix("/") && base.count > 1 ? String(base.dropLast()) : base
+            if path == "." { return trimmed }
+            return trimmed == "/" ? "/\(path)" : "\(trimmed)/\(path)"
         }
     }
 
     private static func runParsed(_ p: ParsedInvocation, workingDirectory: String?) async throws -> String {
-        let paths = try resolve(p.paths, against: workingDirectory)
+        let paths = try resolve(p.paths, explicit: p.pathsGiven, against: workingDirectory)
         let result = try await search(pattern: p.pattern, in: paths, options: p.options)
         switch p.outputFormat {
         case .text:

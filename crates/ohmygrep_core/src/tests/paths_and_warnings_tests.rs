@@ -81,12 +81,21 @@ fn bad_glob_is_invalid_arguments() {
     assert!(matches!(err, OhMyGrepError::InvalidArguments(_)), "{err:?}");
 }
 
+/// Mode 000 is still readable by root (common in CI containers).
+fn lock(path: &str) -> bool {
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    std::fs::read(path).is_err()
+}
+
 #[test]
 fn unreadable_file_becomes_warning() {
     let dir = TempDir::new("unreadable");
     dir.write("ok.txt", b"HIT\n");
     let locked = dir.write("locked.txt", b"HIT\n");
-    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if !lock(&locked) {
+        eprintln!("skipped: running as root");
+        return;
+    }
     let res = search_blocking(req("HIT", &dir.path()), CancelToken::new(None)).unwrap();
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
     assert_eq!(files(&res), vec!["ok.txt"]);
@@ -109,7 +118,10 @@ fn warnings_are_capped_with_overflow_note() {
     let mut locked = Vec::new();
     for i in 0..(MAX_WARNINGS + extra) {
         let path = dir.write(&format!("f{i}.txt"), b"HIT\n");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if !lock(&path) {
+            eprintln!("skipped: running as root");
+            return;
+        }
         locked.push(path);
     }
     let res = search_blocking(req("HIT", &dir.path()), CancelToken::new(None)).unwrap();
@@ -117,10 +129,19 @@ fn warnings_are_capped_with_overflow_note() {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap();
     }
     assert_eq!(res.warnings.len(), MAX_WARNINGS + 1);
-    assert!(res
-        .warnings
+    let last = res.warnings.last().unwrap();
+    assert_eq!(
+        (last.path.as_str(), last.message.as_str()),
+        ("", format!("{extra} more warnings omitted").as_str())
+    );
+    let paths: Vec<_> = res.warnings[..MAX_WARNINGS]
         .iter()
-        .any(|w| w.path.is_empty() && w.message == format!("{extra} more warnings omitted")));
+        .map(|w| &w.path)
+        .collect();
+    assert!(
+        paths.windows(2).all(|w| w[0] <= w[1]),
+        "not sorted: {paths:?}"
+    );
 }
 
 #[test]
@@ -171,7 +192,30 @@ fn named_binary_file_without_match_is_silent() {
 }
 
 #[test]
-fn self_referencing_symlink_terminates_without_duplicates() {
+fn invalid_ignore_file_glob_becomes_warning() {
+    let dir = TempDir::new("badignore");
+    dir.write(".ignore", b"a{\n");
+    dir.write("f.txt", b"HIT\n");
+    let mut r = req("HIT", &dir.path());
+    r.respect_gitignore = true;
+    let res = search_blocking(r, CancelToken::new(None)).unwrap();
+    assert_eq!(res.matches.len(), 1);
+    assert_eq!(res.warnings.len(), 1, "{:?}", res.warnings);
+    assert!(
+        res.warnings[0].path.ends_with(".ignore"),
+        "{:?}",
+        res.warnings[0]
+    );
+    assert!(
+        res.warnings[0].message.contains("a{"),
+        "{:?}",
+        res.warnings[0]
+    );
+}
+
+/// Symlinks are not followed (rg's default without -L), so a self-referencing link is inert.
+#[test]
+fn symlinks_are_not_followed() {
     let dir = TempDir::new("symlink");
     dir.write("a.txt", b"HIT\n");
     std::os::unix::fs::symlink(dir.path(), format!("{}/loop", dir.path())).unwrap();

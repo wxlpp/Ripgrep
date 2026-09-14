@@ -48,6 +48,20 @@ extension OhMyGrep {
             self.warnings = warnings
         }
 
+        private enum CodingKeys: String, CodingKey {
+            case matches, truncated, cancelled, filesSearched, elapsed, warnings
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            matches = try c.decode([Match].self, forKey: .matches)
+            truncated = try c.decode(Bool.self, forKey: .truncated)
+            cancelled = try c.decode(Bool.self, forKey: .cancelled)
+            filesSearched = try c.decode(Int.self, forKey: .filesSearched)
+            elapsed = try c.decode(Duration.self, forKey: .elapsed)
+            warnings = try c.decodeIfPresent([Warning].self, forKey: .warnings) ?? []
+        }
+
         /// Renders like `rg --no-heading -n -H`: `path:line:text` for each matched
         /// line (multiline matches get one row per line), `path-line-text` for
         /// context, and `--` between non-adjacent groups.

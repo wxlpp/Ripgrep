@@ -11,28 +11,25 @@ extension OhMyGrep {
         public var message: String {
             switch self {
             case .invalidArguments(let m): return m
-            // FFI path supplies the already-rendered Display ("invalid regex: …"
-            // from thiserror #[error] + flat_error); avoid double-prefixing while
-            // still prefixing a bare pattern (e.g. constructed directly in tests).
-            case .invalidPattern(let p):
-                return p.hasPrefix("invalid regex:") ? p : "invalid regex: \(p)"
+            case .invalidPattern(let p):   return "invalid regex: \(p)"
             case .pathNotFound(let p):     return "path not found: \(p)"
             case .io(let m):               return "io error: \(m)"
             case .internalPanic(let m):    return "internal panic: \(m)"
             }
         }
 
-        /// Maps a UniFFI-generated OhMyGrepError to our public Error.
-        /// Case names (.InvalidPattern etc.) are PascalCase as emitted by UniFFI
-        /// for ohmygrep_core 0.1.0. If UniFFI regenerates with different casing,
-        /// update this switch to match the enum in Sources/OhMyGrepFFI/OhMyGrepCore.swift.
+        /// Maps the UniFFI error. `flat_error` delivers Rust's rendered Display
+        /// ("path not found: /x"), so the Rust prefix is removed before re-wrapping.
         static func from(_ ffi: OhMyGrepError) -> OhMyGrep.Error {
+            func body(_ s: String, _ prefix: String) -> String {
+                s.hasPrefix(prefix) ? String(s.dropFirst(prefix.count)) : s
+            }
             switch ffi {
-            case .InvalidPattern(let s): return .invalidPattern(s)
-            case .InvalidArguments(let s): return .invalidArguments(message: s)
-            case .PathNotFound(let s):   return .pathNotFound(s)
-            case .Io(let s):             return .io(s)
-            case .InternalPanic(let s):  return .internalPanic(s)
+            case .InvalidPattern(let s):   return .invalidPattern(body(s, "invalid regex: "))
+            case .InvalidArguments(let s): return .invalidArguments(message: body(s, "invalid arguments: "))
+            case .PathNotFound(let s):     return .pathNotFound(body(s, "path not found: "))
+            case .Io(let s):               return .io(body(s, "io error: "))
+            case .InternalPanic(let s):    return .internalPanic(body(s, "internal panic: "))
             }
         }
     }

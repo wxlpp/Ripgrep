@@ -21,7 +21,36 @@ final class WorkingDirectoryTests: XCTestCase {
 
     func testRelativePathResolvesAgainstWorkingDirectory() async throws {
         let out = try await OhMyGrep.run("HIT src", workingDirectory: dir.path)
-        XCTAssertEqual(out, dir.appendingPathComponent("src/a.txt").standardizedFileURL.path + ":1:HIT src")
+        XCTAssertEqual(out, dir.path + "/src/a.txt:1:HIT src")
+    }
+
+    func testResolutionIsTextual() throws {
+        XCTAssertEqual(try OhMyGrep.resolve(["x", "."], explicit: true, against: "/private/tmp/"),
+                       ["/private/tmp/x", "/private/tmp"])
+        XCTAssertEqual(try OhMyGrep.resolve(["a/../b"], explicit: true, against: "/private/var"),
+                       ["/private/var/a/../b"])
+        XCTAssertEqual(try OhMyGrep.resolve(["x"], explicit: true, against: "/"), ["/x"])
+    }
+
+    func testTildeAndEmptyPathsAreRejected() {
+        for path in ["~/x", ""] {
+            XCTAssertThrowsError(try OhMyGrep.resolve([path], explicit: true, against: "/tmp"))
+        }
+    }
+
+    func testImplicitPathWithoutWorkingDirectoryExplainsItself() async throws {
+        let out = try await OhMyGrep.handleToolCall(.init(args: "HIT"))
+        XCTAssertTrue(out.contains("no path given"), out)
+    }
+
+    func testRustInvalidArgumentsMapsWithoutPrefix() async throws {
+        do {
+            _ = try await OhMyGrep.run(["-g", "a{", "HIT", dir.path])
+            XCTFail("expected throw")
+        } catch let e as OhMyGrep.Error {
+            guard case .invalidArguments(let message) = e else { return XCTFail("wrong error: \(e)") }
+            XCTAssertTrue(message.hasPrefix("glob:"), message)
+        }
     }
 
     func testNoPathSearchesWorkingDirectory() async throws {

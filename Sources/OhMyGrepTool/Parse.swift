@@ -10,6 +10,8 @@ extension OhMyGrep {
         public let paths: [String]
         public let options: Options
         public let outputFormat: OutputFormat
+        /// False when no path was given and `paths` is the implicit `["."]`.
+        public let pathsGiven: Bool
     }
 
     public static func parse(_ argString: String) throws -> ParsedInvocation {
@@ -76,7 +78,8 @@ extension OhMyGrep {
             pattern: parsed.pattern,
             paths: paths,
             options: opts,
-            outputFormat: parsed.json ? .jsonLines : .text
+            outputFormat: parsed.json ? .jsonLines : .text,
+            pathsGiven: !parsed.paths.isEmpty
         )
     }
 }

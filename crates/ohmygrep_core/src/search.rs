@@ -118,6 +118,10 @@ fn search_blocking_inner(
                     return WalkState::Continue;
                 }
             };
+            // Ignore-file syntax errors arrive attached to an otherwise valid entry.
+            if let Some(err) = entry.error() {
+                warnings.push_walk_error(err);
+            }
             if !entry.file_type().is_some_and(|t| t.is_file()) {
                 return WalkState::Continue;
             }
@@ -160,8 +164,7 @@ fn search_blocking_inner(
         _ => false,
     };
 
-    let mut warnings = warnings.take();
-    warnings.sort_by(|a, b| a.path.cmp(&b.path));
+    let warnings = warnings.take();
 
     Ok(SearchResult {
         matches,
