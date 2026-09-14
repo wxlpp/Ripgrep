@@ -12,9 +12,13 @@ mod shared;
 mod sink;
 mod warnings;
 
-use cancel::CancelToken;
-use error::OhMyGrepError;
-use options::{SearchRequest, SearchResult};
+// Re-exported for Rust callers such as the fuzz targets; Swift uses the UniFFI bindings.
+pub use cancel::CancelToken;
+pub use error::OhMyGrepError;
+pub use options::{
+    SearchBatch, SearchMatch, SearchRequest, SearchResult, SearchSummary, SearchWarning, Submatch,
+};
+pub use session::SearchSession;
 use std::sync::Arc;
 
 #[uniffi::export]

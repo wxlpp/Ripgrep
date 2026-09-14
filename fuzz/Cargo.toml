@@ -1,0 +1,38 @@
+[package]
+name = "ohmygrep_core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+libfuzzer-sys = "0.4"
+ohmygrep_core = { path = "../crates/ohmygrep_core" }
+
+# Not part of the main workspace: fuzzing needs a nightly toolchain.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "regex-build"
+path = "fuzz_targets/regex_build.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "glob-build"
+path = "fuzz_targets/glob_build.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "search-request"
+path = "fuzz_targets/search_request.rs"
+test = false
+doc = false
+bench = false
