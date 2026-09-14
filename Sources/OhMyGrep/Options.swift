@@ -52,12 +52,16 @@ extension OhMyGrep {
         public var includeHidden: Bool
         public var beforeContext: Int
         public var afterContext: Int
+        /// Total match limit; `nil` means unlimited. Defaults to 10 000 to bound memory.
         public var maxMatches: Int?
         public var maxFiles: Int?
         public var maxFileSizeBytes: Int?
         public var timeout: Duration?
         /// Search files containing NUL bytes as text; by default they are skipped.
         public var searchBinary: Bool
+        /// Longest returned line in UTF-8 bytes (≥ 1); `nil` means unlimited. Long match
+        /// lines keep a window around the first match (see `Match.lineOffset`).
+        public var maxColumns: Int?
 
         public init(
             caseInsensitive: Bool = false,
@@ -71,11 +75,12 @@ extension OhMyGrep {
             includeHidden: Bool = false,
             beforeContext: Int = 0,
             afterContext: Int = 0,
-            maxMatches: Int? = nil,
+            maxMatches: Int? = 10_000,
             maxFiles: Int? = nil,
             maxFileSizeBytes: Int? = nil,
             timeout: Duration? = nil,
-            searchBinary: Bool = false
+            searchBinary: Bool = false,
+            maxColumns: Int? = 4096
         ) {
             self.caseInsensitive = caseInsensitive
             self.smartCase = smartCase
@@ -93,12 +98,13 @@ extension OhMyGrep {
             self.maxFileSizeBytes = maxFileSizeBytes
             self.timeout = timeout
             self.searchBinary = searchBinary
+            self.maxColumns = maxColumns
         }
 
         private enum CodingKeys: String, CodingKey {
             case caseInsensitive, smartCase, multiline, include, exclude, fileTypes
             case respectGitignore, requireGit, includeHidden, beforeContext, afterContext
-            case maxMatches, maxFiles, maxFileSizeBytes, timeout, searchBinary
+            case maxMatches, maxFiles, maxFileSizeBytes, timeout, searchBinary, maxColumns
         }
 
         public init(from decoder: any Decoder) throws {
@@ -126,6 +132,7 @@ extension OhMyGrep {
             maxFileSizeBytes = try optional(.maxFileSizeBytes, d.maxFileSizeBytes)
             timeout = try optional(.timeout, d.timeout)
             searchBinary = try value(.searchBinary, d.searchBinary)
+            maxColumns = try optional(.maxColumns, d.maxColumns)
         }
 
         public func encode(to encoder: any Encoder) throws {
@@ -147,6 +154,7 @@ extension OhMyGrep {
             try c.encode(maxFileSizeBytes, forKey: .maxFileSizeBytes)
             try c.encode(timeout, forKey: .timeout)
             try c.encode(searchBinary, forKey: .searchBinary)
+            try c.encode(maxColumns, forKey: .maxColumns)
         }
     }
 }
@@ -194,6 +202,15 @@ extension OhMyGrep.Options {
             ffiMaxFileSizeBytes = UInt64(s)
         } else { ffiMaxFileSizeBytes = nil }
 
+        let ffiMaxColumns: UInt32?
+        if let c = maxColumns {
+            guard (1...Int(UInt32.max)).contains(c) else {
+                throw .invalidArguments(
+                    message: "maxColumns out of range [1, \(UInt32.max)], got \(c)")
+            }
+            ffiMaxColumns = UInt32(c)
+        } else { ffiMaxColumns = nil }
+
         return SearchRequest(
             pattern: pattern,
             paths: paths,
@@ -211,7 +228,8 @@ extension OhMyGrep.Options {
             maxMatches: ffiMaxMatches,
             maxFiles: ffiMaxFiles,
             maxFileSizeBytes: ffiMaxFileSizeBytes,
-            searchBinary: searchBinary
+            searchBinary: searchBinary,
+            maxColumns: ffiMaxColumns
         )
     }
 }

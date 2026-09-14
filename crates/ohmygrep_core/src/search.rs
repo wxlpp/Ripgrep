@@ -1,16 +1,18 @@
 use crate::cancel::CancelToken;
 use crate::error::OhMyGrepError;
-use crate::options::{SearchMatch, SearchRequest, SearchResult};
-use crate::sink::ChannelSink;
-use crate::warnings::Warnings;
-use crossbeam_channel::unbounded;
+use crate::options::{SearchMatch, SearchRequest, SearchResult, SearchSummary};
+use crate::shared::{Limits, Shared, StoppableReader};
+use crate::sink::{ChannelSink, SinkConfig};
+use crossbeam_channel::{unbounded, Sender};
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{BinaryDetection, SearcherBuilder};
 use ignore::overrides::OverrideBuilder;
 use ignore::types::TypesBuilder;
-use ignore::{WalkBuilder, WalkState};
+use ignore::{DirEntry, WalkBuilder, WalkState};
+use std::io::Read;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -23,23 +25,21 @@ pub fn build_matcher(req: &SearchRequest) -> Result<RegexMatcher, OhMyGrepError>
         .map_err(|e| OhMyGrepError::InvalidPattern(e.to_string()))
 }
 
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic payload".to_string()
+    }
+}
+
 pub fn panic_safe<F, R>(f: F) -> Result<R, OhMyGrepError>
 where
     F: FnOnce() -> R + std::panic::UnwindSafe,
 {
-    match std::panic::catch_unwind(f) {
-        Ok(r) => Ok(r),
-        Err(payload) => {
-            let msg = if let Some(s) = payload.downcast_ref::<&'static str>() {
-                (*s).to_string()
-            } else if let Some(s) = payload.downcast_ref::<String>() {
-                s.clone()
-            } else {
-                "unknown panic payload".to_string()
-            };
-            Err(OhMyGrepError::InternalPanic(msg))
-        }
-    }
+    catch_unwind(f).map_err(|payload| OhMyGrepError::InternalPanic(panic_message(&*payload)))
 }
 
 #[cfg(test)]
@@ -51,7 +51,52 @@ pub fn search_blocking(
     req: SearchRequest,
     cancel: Arc<CancelToken>,
 ) -> Result<SearchResult, OhMyGrepError> {
-    panic_safe(move || search_blocking_inner(req, cancel))?
+    search_with_limits(req, cancel, Limits::default())
+}
+
+pub(crate) fn search_with_limits(
+    req: SearchRequest,
+    cancel: Arc<CancelToken>,
+    limits: Limits,
+) -> Result<SearchResult, OhMyGrepError> {
+    panic_safe(AssertUnwindSafe(move || {
+        let prepared = prepare(req, limits)?;
+        let (tx, rx) = unbounded();
+        let summary = prepared.run(cancel, tx)?;
+        let mut matches: Vec<SearchMatch> = rx.try_iter().collect();
+        matches.sort_by(|a, b| {
+            (a.path.as_str(), a.line_number).cmp(&(b.path.as_str(), b.line_number))
+        });
+        Ok(SearchResult {
+            matches,
+            truncated: summary.truncated,
+            cancelled: summary.cancelled,
+            files_searched: summary.files_searched,
+            elapsed_ms: summary.elapsed_ms,
+            warnings: summary.warnings,
+        })
+    }))?
+}
+
+/// A validated request, ready to run on the calling thread.
+pub(crate) struct Prepared {
+    req: SearchRequest,
+    matcher: RegexMatcher,
+    walker: WalkBuilder,
+    limits: Limits,
+}
+
+/// Validates the request; every request-level error surfaces here, before any walk.
+pub(crate) fn prepare(req: SearchRequest, limits: Limits) -> Result<Prepared, OhMyGrepError> {
+    let matcher = build_matcher(&req)?;
+    let mut walker = build_walker(&req)?;
+    walker.threads(limits.threads);
+    Ok(Prepared {
+        req,
+        matcher,
+        walker,
+        limits,
+    })
 }
 
 /// rg's policy: files reached by walking stop at the first NUL; files named
@@ -67,113 +112,160 @@ fn binary_detection(req: &SearchRequest, explicit: bool) -> BinaryDetection {
     }
 }
 
-fn search_blocking_inner(
-    req: SearchRequest,
-    cancel: Arc<CancelToken>,
-) -> Result<SearchResult, OhMyGrepError> {
-    let start = Instant::now();
+impl Prepared {
+    /// Walks and searches, sending matches to `tx`; returns once every worker is done.
+    pub fn run(
+        self,
+        cancel: Arc<CancelToken>,
+        tx: Sender<SearchMatch>,
+    ) -> Result<SearchSummary, OhMyGrepError> {
+        let start = Instant::now();
+        let max_matches = self.req.max_matches.map(|n| n as usize);
+        let max_files = self.req.max_files.map(|n| n as usize);
+        let shared = Arc::new(Shared::new(cancel, max_matches, self.limits));
+        let (req, matcher) = (&self.req, &self.matcher);
 
-    let matcher = build_matcher(&req)?;
-    let walker = build_walker(&req)?.build_parallel();
-
-    let (tx, rx) = unbounded::<SearchMatch>();
-    // Counters only bound the walk; parallel workers may overshoot a limit, and
-    // the truncation after collection is what makes results exact. Stronger
-    // orderings would not remove that check-then-act race.
-    let match_counter = Arc::new(AtomicUsize::new(0));
-    let file_counter = Arc::new(AtomicUsize::new(0));
-    let warnings = Arc::new(Warnings::default());
-
-    let max_matches = req.max_matches.map(|n| n as usize);
-    let max_files = req.max_files.map(|n| n as usize);
-    let before = req.before_context as usize;
-    let after = req.after_context as usize;
-
-    walker.run(|| {
-        let tx = tx.clone();
-        let cancel = Arc::clone(&cancel);
-        let match_counter = Arc::clone(&match_counter);
-        let file_counter = Arc::clone(&file_counter);
-        let warnings = Arc::clone(&warnings);
-        let matcher = matcher.clone();
-        let req = &req;
-        Box::new(move |entry| {
-            if cancel.is_cancelled() {
-                return WalkState::Quit;
-            }
-            if let Some(max) = max_matches {
-                if match_counter.load(Ordering::Relaxed) >= max {
+        self.walker.build_parallel().run(|| {
+            let tx = tx.clone();
+            let shared = Arc::clone(&shared);
+            Box::new(move |entry| {
+                if shared.should_stop() {
                     return WalkState::Quit;
                 }
-            }
-            if let Some(max) = max_files {
-                if file_counter.load(Ordering::Relaxed) >= max {
+                if max_files.is_some_and(|max| shared.files.load(Ordering::Relaxed) >= max) {
                     return WalkState::Quit;
                 }
-            }
-            let entry = match entry {
-                Ok(e) => e,
-                Err(err) => {
-                    warnings.push_walk_error(&err);
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(err) => {
+                        shared.warnings.push_walk_error(&err);
+                        return WalkState::Continue;
+                    }
+                };
+                // Ignore-file syntax errors arrive attached to an otherwise valid entry.
+                if let Some(err) = entry.error() {
+                    shared.warnings.push_walk_error(err);
+                }
+                if !entry.file_type().is_some_and(|t| t.is_file()) {
                     return WalkState::Continue;
                 }
-            };
-            // Ignore-file syntax errors arrive attached to an otherwise valid entry.
-            if let Some(err) = entry.error() {
-                warnings.push_walk_error(err);
-            }
-            if !entry.file_type().is_some_and(|t| t.is_file()) {
-                return WalkState::Continue;
-            }
-            file_counter.fetch_add(1, Ordering::Relaxed);
+                shared.files.fetch_add(1, Ordering::Relaxed);
+                // A panic here must not kill the worker: ignore's parallel walker
+                // would then wait forever for it to finish.
+                let searched = catch_unwind(AssertUnwindSafe(|| {
+                    search_file(req, matcher, &entry, &shared, &tx)
+                }));
+                match searched {
+                    Ok(()) => WalkState::Continue,
+                    Err(payload) => {
+                        shared.record_panic(panic_message(&*payload));
+                        WalkState::Quit
+                    }
+                }
+            })
+        });
+        drop(tx);
 
-            let explicit = entry.depth() == 0;
-            let path = entry.path().to_string_lossy().into_owned();
-            let mut sink = ChannelSink::new(
-                path.clone(),
-                tx.clone(),
-                Arc::clone(&cancel),
-                Arc::clone(&match_counter),
-                matcher.clone(),
-                before,
-            )
-            .reporting_to(Arc::clone(&warnings), explicit);
-            let mut sb = SearcherBuilder::new();
-            sb.line_number(true);
-            sb.before_context(before);
-            sb.after_context(after);
-            sb.multi_line(req.multiline);
-            sb.binary_detection(binary_detection(req, explicit));
-            if let Err(err) = sb.build().search_path(&matcher, entry.path(), &mut sink) {
-                warnings.push(path, err.to_string());
-            }
-            WalkState::Continue
-        })
-    });
-
-    drop(tx);
-    let mut matches: Vec<SearchMatch> = rx.iter().collect();
-    matches.sort_by(|a, b| (a.path.as_str(), a.line_number).cmp(&(b.path.as_str(), b.line_number)));
-
-    // `>=`: collecting exactly `max` means the walk was stopped by the limit.
-    let truncated = match max_matches {
-        Some(max) if matches.len() >= max => {
-            matches.truncate(max);
-            true
+        if let Some(message) = shared.take_panic() {
+            return Err(OhMyGrepError::InternalPanic(message));
         }
-        _ => false,
+        Ok(SearchSummary {
+            truncated: shared.truncated(),
+            cancelled: shared.cancel.is_cancelled(),
+            files_searched: shared.files.load(Ordering::Relaxed) as u64,
+            elapsed_ms: start.elapsed().as_millis() as u64,
+            warnings: shared.warnings.take(),
+        })
+    }
+}
+
+fn search_file(
+    req: &SearchRequest,
+    matcher: &RegexMatcher,
+    entry: &DirEntry,
+    shared: &Arc<Shared>,
+    tx: &Sender<SearchMatch>,
+) {
+    let explicit = entry.depth() == 0;
+    let path = entry.path().to_string_lossy().into_owned();
+    let mut sink = ChannelSink::new(
+        path.clone(),
+        tx.clone(),
+        Arc::clone(shared),
+        matcher.clone(),
+        SinkConfig {
+            before_context: req.before_context as usize,
+            after_context: req.after_context as usize,
+            max_columns: req.max_columns.map(|n| n as usize),
+            explicit,
+        },
+    );
+    let mut builder = SearcherBuilder::new();
+    builder
+        .line_number(true)
+        .before_context(req.before_context as usize)
+        .after_context(req.after_context as usize)
+        .multi_line(req.multiline)
+        .binary_detection(binary_detection(req, explicit));
+    if !req.multiline {
+        builder.heap_limit(Some(shared.limits.line_heap));
+    }
+    let mut searcher = builder.build();
+
+    let file = match std::fs::File::open(entry.path()) {
+        Ok(f) => f,
+        Err(err) => return shared.warnings.push(path, err.to_string()),
     };
+    let result = if req.multiline {
+        match read_for_multiline(file, shared) {
+            Ok(Some((buf, _guard))) => searcher.search_slice(matcher, &buf, &mut sink),
+            Ok(None) => return,
+            Err(message) => return shared.warnings.push(path, message),
+        }
+    } else {
+        searcher.search_reader(
+            matcher,
+            StoppableReader::new(file, Arc::clone(shared)),
+            &mut sink,
+        )
+    };
+    if let Err(err) = result {
+        sink.finish_after_error(&err.to_string());
+    }
+}
 
-    let warnings = warnings.take();
-
-    Ok(SearchResult {
-        matches,
-        truncated,
-        cancelled: cancel.is_cancelled(),
-        files_searched: file_counter.load(Ordering::Relaxed) as u64,
-        elapsed_ms: start.elapsed().as_millis() as u64,
-        warnings,
-    })
+/// Reads a whole file under the shared multiline budget. `Ok(None)` means the
+/// search stopped while waiting for budget.
+fn read_for_multiline(
+    file: std::fs::File,
+    shared: &Arc<Shared>,
+) -> Result<Option<(Vec<u8>, crate::shared::BudgetGuard)>, String> {
+    let budget = shared.limits.multiline_budget;
+    let too_big = || {
+        format!(
+            "skipped: file needs more than {} MiB for multiline search",
+            budget >> 20
+        )
+    };
+    let len = file.metadata().map_err(|e| e.to_string())?.len();
+    let Ok(len) = usize::try_from(len) else {
+        return Err(too_big());
+    };
+    if len > budget {
+        return Err(too_big());
+    }
+    let Some(guard) = shared.reserve_multiline(len) else {
+        return Ok(None);
+    };
+    let mut buf = Vec::with_capacity(len);
+    StoppableReader::new(file, Arc::clone(shared))
+        .take(len as u64 + 1)
+        .read_to_end(&mut buf)
+        .map_err(|e| e.to_string())?;
+    if buf.len() > len {
+        return Err("skipped: file grew while being read".into());
+    }
+    Ok(Some((buf, guard)))
 }
 
 pub fn build_walker(req: &SearchRequest) -> Result<WalkBuilder, OhMyGrepError> {

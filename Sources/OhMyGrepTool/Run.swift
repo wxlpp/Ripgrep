@@ -43,11 +43,18 @@ extension OhMyGrep {
         switch p.outputFormat {
         case .text:
             let hasContext = p.options.beforeContext > 0 || p.options.afterContext > 0
-            let notes = result.warnings.map { $0.path.isEmpty ? $0.message : "\($0.path): \($0.message)" }
+            var notes = result.warnings.map { $0.path.isEmpty ? $0.message : "\($0.path): \($0.message)" }
+            if result.truncated, let limit = p.options.maxMatches {
+                notes.append("results truncated at \(limit) matches")
+            }
             return ([result.formattedAsText(contextSeparators: hasContext)].filter { !$0.isEmpty } + notes)
                 .joined(separator: "\n")
         case .jsonLines:
-            return result.formattedAsJSONLines()
+            var lines = result.formattedAsJSONLines()
+            if result.truncated, let limit = p.options.maxMatches {
+                lines += (lines.isEmpty ? "" : "\n") + #"{"truncated":{"limit":\#(limit)}}"#
+            }
+            return lines
         }
     }
 }

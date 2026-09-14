@@ -627,23 +627,240 @@ public func FfiConverterTypeCancelToken_lower(_ value: CancelToken) -> UnsafeMut
     return FfiConverterTypeCancelToken.lower(value)
 }
 
+/**
+ * A search running on a background thread whose matches are pulled in batches.
+ */
+public protocol SearchSessionProtocol: AnyObject {
+    /**
+     * Blocks until at least one match is available or the search ends, then returns
+     * up to `max` matches. The final batch carries the summary; after a cancel it
+     * arrives without draining buffered matches.
+     */
+    func nextBatch(max: UInt32) throws -> SearchBatch
+}
+
+/**
+ * A search running on a background thread whose matches are pulled in batches.
+ */
+open class SearchSession:
+    SearchSessionProtocol
+{
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    // Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+    #if swift(>=5.8)
+        @_documentation(visibility: private)
+    #endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+    public required init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+    #if swift(>=5.8)
+        @_documentation(visibility: private)
+    #endif
+    public init(noPointer _: NoPointer) {
+        pointer = nil
+    }
+
+    #if swift(>=5.8)
+        @_documentation(visibility: private)
+    #endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_ohmygrep_core_fn_clone_searchsession(self.pointer, $0) }
+    }
+
+    // No primary constructor declared for this class.
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_ohmygrep_core_fn_free_searchsession(pointer, $0) }
+    }
+
+    /**
+     * Validates the request synchronously, then starts the walk.
+     */
+    public static func start(request: SearchRequest, cancel: CancelToken) throws -> SearchSession {
+        return try FfiConverterTypeSearchSession.lift(rustCallWithError(FfiConverterTypeOhMyGrepError.lift) {
+            uniffi_ohmygrep_core_fn_constructor_searchsession_start(
+                FfiConverterTypeSearchRequest.lower(request),
+                FfiConverterTypeCancelToken.lower(cancel), $0
+            )
+        })
+    }
+
+    /**
+     * Blocks until at least one match is available or the search ends, then returns
+     * up to `max` matches. The final batch carries the summary; after a cancel it
+     * arrives without draining buffered matches.
+     */
+    open func nextBatch(max: UInt32) throws -> SearchBatch {
+        return try FfiConverterTypeSearchBatch.lift(rustCallWithError(FfiConverterTypeOhMyGrepError.lift) {
+            uniffi_ohmygrep_core_fn_method_searchsession_next_batch(self.uniffiClonePointer(),
+                                                                    FfiConverterUInt32.lower(max), $0)
+        })
+    }
+}
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSearchSession: FfiConverter {
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = SearchSession
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> SearchSession {
+        return SearchSession(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: SearchSession) -> UnsafeMutableRawPointer {
+        return value.uniffiClonePointer()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SearchSession {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if ptr == nil {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: SearchSession, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSearchSession_lift(_ pointer: UnsafeMutableRawPointer) throws -> SearchSession {
+    return try FfiConverterTypeSearchSession.lift(pointer)
+}
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSearchSession_lower(_ value: SearchSession) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeSearchSession.lower(value)
+}
+
+/**
+ * One `SearchSession::next_batch` result; `summary` is set on the final batch only.
+ */
+public struct SearchBatch {
+    public var matches: [SearchMatch]
+    public var summary: SearchSummary?
+
+    /// Default memberwise initializers are never public by default, so we
+    /// declare one manually.
+    public init(matches: [SearchMatch], summary: SearchSummary?) {
+        self.matches = matches
+        self.summary = summary
+    }
+}
+
+extension SearchBatch: Equatable, Hashable {
+    public static func == (lhs: SearchBatch, rhs: SearchBatch) -> Bool {
+        if lhs.matches != rhs.matches {
+            return false
+        }
+        if lhs.summary != rhs.summary {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(matches)
+        hasher.combine(summary)
+    }
+}
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSearchBatch: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SearchBatch {
+        return
+            try SearchBatch(
+                matches: FfiConverterSequenceTypeSearchMatch.read(from: &buf),
+                summary: FfiConverterOptionTypeSearchSummary.read(from: &buf)
+            )
+    }
+
+    public static func write(_ value: SearchBatch, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeSearchMatch.write(value.matches, into: &buf)
+        FfiConverterOptionTypeSearchSummary.write(value.summary, into: &buf)
+    }
+}
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSearchBatch_lift(_ buf: RustBuffer) throws -> SearchBatch {
+    return try FfiConverterTypeSearchBatch.lift(buf)
+}
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSearchBatch_lower(_ value: SearchBatch) -> RustBuffer {
+    return FfiConverterTypeSearchBatch.lower(value)
+}
+
 public struct SearchMatch {
     public var path: String
     public var lineNumber: UInt64
     public var line: String
     public var beforeContext: [String]
     public var afterContext: [String]
+    /**
+     * Offsets are relative to `line`.
+     */
     public var submatches: [Submatch]
+    /**
+     * Byte offset of `line` within the original line when `line_truncated` cut a window.
+     */
+    public var lineOffset: UInt32
+    public var lineTruncated: Bool
 
     /// Default memberwise initializers are never public by default, so we
     /// declare one manually.
-    public init(path: String, lineNumber: UInt64, line: String, beforeContext: [String], afterContext: [String], submatches: [Submatch]) {
+    public init(path: String, lineNumber: UInt64, line: String, beforeContext: [String], afterContext: [String],
+                /* 
+                    * Offsets are relative to `line`.
+                    */ submatches: [Submatch],
+                /* 
+                    * Byte offset of `line` within the original line when `line_truncated` cut a window.
+                    */ lineOffset: UInt32, lineTruncated: Bool)
+    {
         self.path = path
         self.lineNumber = lineNumber
         self.line = line
         self.beforeContext = beforeContext
         self.afterContext = afterContext
         self.submatches = submatches
+        self.lineOffset = lineOffset
+        self.lineTruncated = lineTruncated
     }
 }
 
@@ -667,6 +884,12 @@ extension SearchMatch: Equatable, Hashable {
         if lhs.submatches != rhs.submatches {
             return false
         }
+        if lhs.lineOffset != rhs.lineOffset {
+            return false
+        }
+        if lhs.lineTruncated != rhs.lineTruncated {
+            return false
+        }
         return true
     }
 
@@ -677,6 +900,8 @@ extension SearchMatch: Equatable, Hashable {
         hasher.combine(beforeContext)
         hasher.combine(afterContext)
         hasher.combine(submatches)
+        hasher.combine(lineOffset)
+        hasher.combine(lineTruncated)
     }
 }
 
@@ -692,7 +917,9 @@ public struct FfiConverterTypeSearchMatch: FfiConverterRustBuffer {
                 line: FfiConverterString.read(from: &buf),
                 beforeContext: FfiConverterSequenceString.read(from: &buf),
                 afterContext: FfiConverterSequenceString.read(from: &buf),
-                submatches: FfiConverterSequenceTypeSubmatch.read(from: &buf)
+                submatches: FfiConverterSequenceTypeSubmatch.read(from: &buf),
+                lineOffset: FfiConverterUInt32.read(from: &buf),
+                lineTruncated: FfiConverterBool.read(from: &buf)
             )
     }
 
@@ -703,6 +930,8 @@ public struct FfiConverterTypeSearchMatch: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.beforeContext, into: &buf)
         FfiConverterSequenceString.write(value.afterContext, into: &buf)
         FfiConverterSequenceTypeSubmatch.write(value.submatches, into: &buf)
+        FfiConverterUInt32.write(value.lineOffset, into: &buf)
+        FfiConverterBool.write(value.lineTruncated, into: &buf)
     }
 }
 
@@ -741,13 +970,20 @@ public struct SearchRequest {
     public var maxFiles: UInt32?
     public var maxFileSizeBytes: UInt64?
     public var searchBinary: Bool
+    /**
+     * Longest line, in bytes, returned for a match or context line.
+     */
+    public var maxColumns: UInt32?
 
     /// Default memberwise initializers are never public by default, so we
     /// declare one manually.
     public init(pattern: String, paths: [String], caseInsensitive: Bool, smartCase: Bool, multiline: Bool, includeGlobs: [String], excludeGlobs: [String], fileTypes: [String], respectGitignore: Bool,
                 /* 
                     * Apply `.gitignore` rules only inside a git repository (rg's default).
-                    */ requireGit: Bool, includeHidden: Bool, beforeContext: UInt32, afterContext: UInt32, maxMatches: UInt32?, maxFiles: UInt32?, maxFileSizeBytes: UInt64?, searchBinary: Bool)
+                    */ requireGit: Bool, includeHidden: Bool, beforeContext: UInt32, afterContext: UInt32, maxMatches: UInt32?, maxFiles: UInt32?, maxFileSizeBytes: UInt64?, searchBinary: Bool,
+                /* 
+                    * Longest line, in bytes, returned for a match or context line.
+                    */ maxColumns: UInt32?)
     {
         self.pattern = pattern
         self.paths = paths
@@ -766,6 +1002,7 @@ public struct SearchRequest {
         self.maxFiles = maxFiles
         self.maxFileSizeBytes = maxFileSizeBytes
         self.searchBinary = searchBinary
+        self.maxColumns = maxColumns
     }
 }
 
@@ -822,6 +1059,9 @@ extension SearchRequest: Equatable, Hashable {
         if lhs.searchBinary != rhs.searchBinary {
             return false
         }
+        if lhs.maxColumns != rhs.maxColumns {
+            return false
+        }
         return true
     }
 
@@ -843,6 +1083,7 @@ extension SearchRequest: Equatable, Hashable {
         hasher.combine(maxFiles)
         hasher.combine(maxFileSizeBytes)
         hasher.combine(searchBinary)
+        hasher.combine(maxColumns)
     }
 }
 
@@ -869,7 +1110,8 @@ public struct FfiConverterTypeSearchRequest: FfiConverterRustBuffer {
                 maxMatches: FfiConverterOptionUInt32.read(from: &buf),
                 maxFiles: FfiConverterOptionUInt32.read(from: &buf),
                 maxFileSizeBytes: FfiConverterOptionUInt64.read(from: &buf),
-                searchBinary: FfiConverterBool.read(from: &buf)
+                searchBinary: FfiConverterBool.read(from: &buf),
+                maxColumns: FfiConverterOptionUInt32.read(from: &buf)
             )
     }
 
@@ -891,6 +1133,7 @@ public struct FfiConverterTypeSearchRequest: FfiConverterRustBuffer {
         FfiConverterOptionUInt32.write(value.maxFiles, into: &buf)
         FfiConverterOptionUInt64.write(value.maxFileSizeBytes, into: &buf)
         FfiConverterBool.write(value.searchBinary, into: &buf)
+        FfiConverterOptionUInt32.write(value.maxColumns, into: &buf)
     }
 }
 
@@ -999,6 +1242,98 @@ public func FfiConverterTypeSearchResult_lift(_ buf: RustBuffer) throws -> Searc
 #endif
 public func FfiConverterTypeSearchResult_lower(_ value: SearchResult) -> RustBuffer {
     return FfiConverterTypeSearchResult.lower(value)
+}
+
+public struct SearchSummary {
+    /**
+     * The match limit was reached (more matches may or may not exist).
+     */
+    public var truncated: Bool
+    public var cancelled: Bool
+    public var filesSearched: UInt64
+    public var elapsedMs: UInt64
+    public var warnings: [SearchWarning]
+
+    /// Default memberwise initializers are never public by default, so we
+    /// declare one manually.
+    public init(
+        /* 
+         * The match limit was reached (more matches may or may not exist).
+         */ truncated: Bool, cancelled: Bool, filesSearched: UInt64, elapsedMs: UInt64, warnings: [SearchWarning]
+    ) {
+        self.truncated = truncated
+        self.cancelled = cancelled
+        self.filesSearched = filesSearched
+        self.elapsedMs = elapsedMs
+        self.warnings = warnings
+    }
+}
+
+extension SearchSummary: Equatable, Hashable {
+    public static func == (lhs: SearchSummary, rhs: SearchSummary) -> Bool {
+        if lhs.truncated != rhs.truncated {
+            return false
+        }
+        if lhs.cancelled != rhs.cancelled {
+            return false
+        }
+        if lhs.filesSearched != rhs.filesSearched {
+            return false
+        }
+        if lhs.elapsedMs != rhs.elapsedMs {
+            return false
+        }
+        if lhs.warnings != rhs.warnings {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(truncated)
+        hasher.combine(cancelled)
+        hasher.combine(filesSearched)
+        hasher.combine(elapsedMs)
+        hasher.combine(warnings)
+    }
+}
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSearchSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SearchSummary {
+        return
+            try SearchSummary(
+                truncated: FfiConverterBool.read(from: &buf),
+                cancelled: FfiConverterBool.read(from: &buf),
+                filesSearched: FfiConverterUInt64.read(from: &buf),
+                elapsedMs: FfiConverterUInt64.read(from: &buf),
+                warnings: FfiConverterSequenceTypeSearchWarning.read(from: &buf)
+            )
+    }
+
+    public static func write(_ value: SearchSummary, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.truncated, into: &buf)
+        FfiConverterBool.write(value.cancelled, into: &buf)
+        FfiConverterUInt64.write(value.filesSearched, into: &buf)
+        FfiConverterUInt64.write(value.elapsedMs, into: &buf)
+        FfiConverterSequenceTypeSearchWarning.write(value.warnings, into: &buf)
+    }
+}
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSearchSummary_lift(_ buf: RustBuffer) throws -> SearchSummary {
+    return try FfiConverterTypeSearchSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSearchSummary_lower(_ value: SearchSummary) -> RustBuffer {
+    return FfiConverterTypeSearchSummary.lower(value)
 }
 
 /**
@@ -1246,6 +1581,30 @@ private struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
 #if swift(>=5.8)
     @_documentation(visibility: private)
 #endif
+private struct FfiConverterOptionTypeSearchSummary: FfiConverterRustBuffer {
+    typealias SwiftType = SearchSummary?
+
+    static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSearchSummary.write(value, into: &buf)
+    }
+
+    static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSearchSummary.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
 private struct FfiConverterSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]
 
@@ -1377,7 +1736,13 @@ private var initializationResult: InitializationResult = {
     if uniffi_ohmygrep_core_checksum_method_canceltoken_is_cancelled() != 42323 {
         return InitializationResult.apiChecksumMismatch
     }
+    if uniffi_ohmygrep_core_checksum_method_searchsession_next_batch() != 21998 {
+        return InitializationResult.apiChecksumMismatch
+    }
     if uniffi_ohmygrep_core_checksum_constructor_canceltoken_new() != 59277 {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if uniffi_ohmygrep_core_checksum_constructor_searchsession_start() != 20215 {
         return InitializationResult.apiChecksumMismatch
     }
 

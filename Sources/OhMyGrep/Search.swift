@@ -62,7 +62,9 @@ extension OhMyGrep.Match {
             line: ffi.line,
             beforeContext: ffi.beforeContext,
             afterContext: ffi.afterContext,
-            submatches: ffi.submatches.map { OhMyGrep.Submatch(start: Int($0.start), end: Int($0.end)) }
+            submatches: ffi.submatches.map { OhMyGrep.Submatch(start: Int($0.start), end: Int($0.end)) },
+            lineOffset: Int(ffi.lineOffset),
+            lineTruncated: ffi.lineTruncated
         )
     }
 }

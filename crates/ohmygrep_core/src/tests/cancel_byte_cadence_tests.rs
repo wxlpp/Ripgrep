@@ -1,9 +1,6 @@
-use super::sink::ChannelSink;
 use crossbeam_channel::unbounded;
 use grep_regex::RegexMatcher;
 use grep_searcher::SearcherBuilder;
-use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
 
 /// Build an input of `n` lines each consisting of the pattern repeated to
 /// fill at least `line_bytes` bytes, terminated by a newline.
@@ -35,20 +32,12 @@ fn byte_cadence_stops_on_giant_lines() {
     let input = make_giant_lines(3, line_size);
 
     let (tx, rx) = unbounded();
-    let counter = Arc::new(AtomicUsize::new(0));
     let matcher = RegexMatcher::new("match").unwrap();
 
     // Pre-tripped cancel token.
     let cancel = crate::cancel::CancelToken::new(Some(0));
 
-    let mut sink = ChannelSink::new(
-        "synthetic-giant".into(),
-        tx,
-        cancel,
-        Arc::clone(&counter),
-        matcher.clone(),
-        0,
-    );
+    let mut sink = super::support::test_sink("synthetic-giant", tx, cancel, matcher.clone());
 
     let result = SearcherBuilder::new()
         .line_number(true)
