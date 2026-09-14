@@ -1,8 +1,7 @@
 name: Release
 
-# Manual: builds and tests the XCFramework, points Package.swift at the new
-# release, then commits, tags and publishes. The tagged commit therefore always
-# carries the checksum of the uploaded zip.
+# Manual: builds and tests the XCFramework, then tags a release commit (not pushed
+# to main) whose Package.swift points at the uploaded zip and its checksum.
 on:
   workflow_dispatch:
     inputs:
@@ -63,7 +62,7 @@ jobs:
       - name: Point Package.swift at the release
         run: bash scripts/set-release.sh "$VERSION" "$(cat dist/OhMyGrepCore.xcframework.zip.sha256)"
 
-      - name: Commit, tag and push
+      - name: Commit and push the release tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -72,8 +71,8 @@ jobs:
           git add Package.swift
           git commit -m "Release $VERSION"
           git tag "$VERSION"
-          # Atomic: if main moved meanwhile, neither the commit nor the tag is pushed.
-          git push --atomic origin HEAD:main "refs/tags/$VERSION"
+          # Only the tag is pushed: main keeps building against the local XCFramework.
+          git push origin "refs/tags/$VERSION"
 
       - name: Publish GitHub release
         env:
@@ -100,4 +99,4 @@ jobs:
           EOF
           echo 'import OhMyGrep' > "$consumer/Sources/Consumer/Consumer.swift"
           swift build --package-path "$consumer"
-          (cd "$consumer" && xcodebuild -scheme Consumer -destination 'generic/platform=iOS' build)
+          (cd "$consumer" && xcodebuild -scheme Consumer-Package -destination 'generic/platform=iOS' build)

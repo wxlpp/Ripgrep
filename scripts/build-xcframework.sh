@@ -50,6 +50,3 @@ xcodebuild -create-xcframework \
     -output "$OUT"
 
 echo "Built: $OUT"
-echo "SwiftPM caches Package.swift's local-vs-release choice: if this package was resolved"
-echo "before the XCFramework existed, run 'swift package reset' (Xcode: File > Packages >"
-echo "Reset Package Caches)."

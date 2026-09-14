@@ -1,17 +1,15 @@
 // swift-tools-version:6.0
-import Foundation
 import PackageDescription
 
-// Rewritten by scripts/set-release.sh during the release workflow.
+// On main the package builds against a local XCFramework (scripts/build-xcframework.sh).
+// Release tags are cut from a commit where scripts/set-release.sh switches to the
+// published zip. A static flag, not a file check: SwiftPM caches manifest results.
+let useLocalBinary = true
 let releaseVersion = "0.0.0"
 let releaseChecksum = "0000000000000000000000000000000000000000000000000000000000000000"
 
-// A locally built XCFramework (scripts/build-xcframework.sh) takes precedence over
-// the release download, so contributors can change the Rust core.
-let localXCFramework = "Frameworks/OhMyGrepCore.xcframework"
-let coreBinary: Target =
-    FileManager.default.fileExists(atPath: Context.packageDirectory + "/" + localXCFramework)
-    ? .binaryTarget(name: "OhMyGrepCore", path: localXCFramework)
+let coreBinary: Target = useLocalBinary
+    ? .binaryTarget(name: "OhMyGrepCore", path: "Frameworks/OhMyGrepCore.xcframework")
     : .binaryTarget(
         name: "OhMyGrepCore",
         url: "https://github.com/wxlpp/oh-my-grep/releases/download/\(releaseVersion)/OhMyGrepCore.xcframework.zip",
