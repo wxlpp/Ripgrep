@@ -158,14 +158,18 @@ pub struct StoppableReader<R> {
     inner: R,
     shared: Arc<Shared>,
     since_check: usize,
+    /// Also stop at the match limit. Off when after-context is collected: EOF mid-line
+    /// would hand a reserved match a truncated context line.
+    stop_on_limit: bool,
 }
 
 impl<R> StoppableReader<R> {
-    pub fn new(inner: R, shared: Arc<Shared>) -> Self {
+    pub fn new(inner: R, shared: Arc<Shared>, stop_on_limit: bool) -> Self {
         StoppableReader {
             inner,
             shared,
             since_check: 0,
+            stop_on_limit,
         }
     }
 }
@@ -174,7 +178,12 @@ impl<R: Read> Read for StoppableReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.since_check >= MIB {
             self.since_check = 0;
-            if self.shared.should_stop() {
+            let stop = if self.stop_on_limit {
+                self.shared.should_stop()
+            } else {
+                self.shared.aborted()
+            };
+            if stop {
                 // EOF rather than an error: `Interrupted` would be retried forever.
                 return Ok(0);
             }

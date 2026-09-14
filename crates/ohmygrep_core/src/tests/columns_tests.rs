@@ -81,3 +81,11 @@ fn context_prefix_cut() {
     assert_eq!(cut_prefix(b"abcdef", Some(3)), "abc");
     assert_eq!(cut_prefix(b"abc", None), "abc");
 }
+
+#[test]
+fn zero_width_submatch_at_line_end_survives_the_window() {
+    let content = "a".repeat(1000);
+    let cut = cut_match(content.as_bytes(), vec![sub(1000, 1000)], Some(100), false);
+    assert_eq!(cut.offset, 900);
+    assert_eq!(cut.submatches, vec![sub(100, 100)]);
+}

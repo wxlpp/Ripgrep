@@ -11,6 +11,11 @@ extension OhMyGrep {
         /// Includes time the search waited for `onMatch`.
         public var elapsed: Duration
         public var warnings: [Warning]
+
+        public init(truncated: Bool, cancelled: Bool, filesSearched: Int, elapsed: Duration, warnings: [Warning] = []) {
+            self.truncated = truncated; self.cancelled = cancelled
+            self.filesSearched = filesSearched; self.elapsed = elapsed; self.warnings = warnings
+        }
     }
 
     /// Streams matches as they are found, so memory does not grow with the number of matches.

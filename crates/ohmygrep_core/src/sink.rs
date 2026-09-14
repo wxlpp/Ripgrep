@@ -77,14 +77,20 @@ impl<M: Matcher> ChannelSink<M> {
         }
     }
 
-    fn poll_stop(&mut self, bytes: usize) -> bool {
+    /// Periodic stop check. `abort_only` keeps a reached match limit from cutting
+    /// the after-context of a match that already holds a slot.
+    fn poll_stop(&mut self, bytes: usize, abort_only: bool) -> bool {
         self.events_since_check += 1;
         self.bytes_since_check += bytes;
         if self.events_since_check >= STOP_CHECK_EVERY || self.bytes_since_check >= STOP_CHECK_BYTES
         {
             self.events_since_check = 0;
             self.bytes_since_check = 0;
-            return self.shared.should_stop();
+            return if abort_only {
+                self.shared.aborted()
+            } else {
+                self.shared.should_stop()
+            };
         }
         false
     }
@@ -122,9 +128,22 @@ impl<M: Matcher> ChannelSink<M> {
             bytes.strip_suffix(b"\n").unwrap_or(bytes)
         };
         let limit = content(bytes).len();
-        let mut out = Vec::new();
+        let mut out: Vec<Submatch> = Vec::new();
         let mut at = 0;
         while let Ok(Some(mat)) = self.matcher.find_at(haystack, at) {
+            // Only submatches that can survive the column cut are kept, so a line full
+            // of matches cannot allocate far beyond `max_columns`.
+            if let Some(max) = self.config.max_columns {
+                let beyond = if multi_line {
+                    out.len() > max
+                } else {
+                    out.first()
+                        .is_some_and(|first| mat.start() > first.start as usize + max)
+                };
+                if beyond {
+                    break;
+                }
+            }
             out.push(Submatch {
                 start: mat.start().min(limit) as u32,
                 end: mat.end().min(limit) as u32,
@@ -202,7 +221,7 @@ impl<M: Matcher> Sink for ChannelSink<M> {
         }
         // Stop with Ok(false), not Err: grep-searcher still calls finish(),
         // which delivers the pending match instead of dropping it.
-        if self.poll_stop(m.bytes().len()) {
+        if self.poll_stop(m.bytes().len(), false) {
             return Ok(false);
         }
         self.matches_in_file += 1;
@@ -244,7 +263,11 @@ impl<M: Matcher> Sink for ChannelSink<M> {
     }
 
     fn context(&mut self, _: &Searcher, ctx: &SinkContext<'_>) -> Result<bool, Self::Error> {
-        if self.poll_stop(ctx.bytes().len()) {
+        let collecting = self
+            .pending
+            .as_ref()
+            .is_some_and(|p| p.after_context.len() < self.config.after_context);
+        if self.poll_stop(ctx.bytes().len(), collecting) {
             return Ok(false);
         }
         let max_columns = self.config.max_columns;

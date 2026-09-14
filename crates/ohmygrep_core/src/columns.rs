@@ -80,7 +80,9 @@ fn cut_window(content: &[u8], submatches: Vec<Submatch>, max: usize) -> CutLine 
         .into_iter()
         .filter(|s| {
             let (s_start, s_end) = (s.start as usize, s.end as usize);
-            (s_start < end && s_end > start) || (s_start == s_end && s_start == start)
+            (s_start < end && s_end > start)
+                || (s_start == s_end
+                    && (s_start == start || (s_start == end && end == content.len())))
         })
         .map(|s| Submatch {
             start: ((s.start as usize).max(start) - start) as u32,

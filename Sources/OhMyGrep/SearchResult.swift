@@ -13,7 +13,7 @@ extension OhMyGrep {
         public let line: String
         public let beforeContext: [String]
         public let afterContext: [String]
-        /// Byte offsets into `line` (UTF-8), not into the original line.
+        /// Byte offsets into the raw bytes behind `line` (which is lossily decoded), not into the original line.
         public let submatches: [Submatch]
         /// Byte offset of `line` within the original line; non-zero only when a long
         /// line was cut to a window around its first match.

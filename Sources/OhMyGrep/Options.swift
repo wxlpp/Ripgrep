@@ -59,7 +59,7 @@ extension OhMyGrep {
         public var timeout: Duration?
         /// Search files containing NUL bytes as text; by default they are skipped.
         public var searchBinary: Bool
-        /// Longest returned line in UTF-8 bytes (≥ 1); `nil` means unlimited. Long match
+        /// Longest returned line in bytes of the file's raw content (≥ 1); `nil` means unlimited. Long match
         /// lines keep a window around the first match (see `Match.lineOffset`).
         public var maxColumns: Int?
 

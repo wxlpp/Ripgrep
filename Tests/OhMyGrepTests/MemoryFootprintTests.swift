@@ -26,7 +26,7 @@ final class MemoryFootprintTests: XCTestCase {
         let before = Self.footprintMiB()
         let peak = PeakTracker(start: before)
         let summary = try await OhMyGrep.stream(pattern: "status=200", in: [file], options: options) { _ in
-            peak.sample(MemoryFootprintTests.footprintMiB())
+            peak.sample { MemoryFootprintTests.footprintMiB() }
         }
         let streamPeak = peak.value
         print("PERF stream: matches drained, files=\(summary.filesSearched) footprint before=\(before) MiB peak=\(streamPeak) MiB")
@@ -42,11 +42,11 @@ private final class PeakTracker: @unchecked Sendable {
     private var peak: Double
     private var samples = 0
     init(start: Double) { peak = start }
-    func sample(_ value: Double) {
+    /// Measures on every 1000th call; measuring every match would dominate the run.
+    func sample(_ measure: () -> Double) {
         lock.lock(); defer { lock.unlock() }
         samples += 1
-        // Sampling every match would dominate the run; every 1000th is enough for a peak.
-        if samples % 1000 == 0 { peak = max(peak, value) }
+        if samples % 1000 == 0 { peak = max(peak, measure()) }
     }
     var value: Double { lock.lock(); defer { lock.unlock() }; return peak }
 }

@@ -256,7 +256,7 @@ fn stoppable_reader_ends_an_endless_read_once_cancelled() {
     cancel.cancel();
     let read = within(Duration::from_secs(5), move || {
         let mut buf = Vec::new();
-        StoppableReader::new(std::io::repeat(b'a'), shared)
+        StoppableReader::new(std::io::repeat(b'a'), shared, true)
             .read_to_end(&mut buf)
             .map(|_| buf.len())
             .unwrap()
@@ -286,4 +286,136 @@ fn max_columns_applies_to_match_and_context_lines() {
     );
     assert_eq!(m.before_context, vec!["y".repeat(20)]);
     assert_eq!(m.after_context, vec!["y".repeat(20)]);
+}
+
+#[test]
+fn cancel_after_the_walk_ended_reports_cancelled() {
+    let dir = many_matches("late_cancel", 1, 100);
+    let cancel = CancelToken::new(None);
+    let session = SearchSession::start(limited_path(&dir.path()), Arc::clone(&cancel)).unwrap();
+    assert_eq!(session.next_batch(1).unwrap().matches.len(), 1);
+    std::thread::sleep(Duration::from_millis(300)); // the walk ends with 99 matches buffered
+    cancel.cancel();
+    let last = session.next_batch(1024).unwrap();
+    assert!(last.matches.is_empty());
+    assert!(
+        last.summary.unwrap().cancelled,
+        "buffered matches were dropped"
+    );
+}
+
+#[test]
+fn reaching_the_limit_keeps_after_context_of_reserved_matches() {
+    let dir = many_matches("limit_context", 1, 100);
+    let res = search_blocking(limited(&dir, Some(50), 1), CancelToken::new(None)).unwrap();
+    assert_eq!(res.matches.len(), 50);
+    for m in &res.matches {
+        assert_eq!(
+            m.after_context,
+            vec!["filler".to_string()],
+            "line {}",
+            m.line_number
+        );
+    }
+}
+
+#[test]
+fn reserved_matches_are_delivered_through_a_full_channel() {
+    let dir = many_matches("full_channel", 1, 400);
+    let session =
+        SearchSession::start(limited(&dir, Some(257), 0), CancelToken::new(None)).unwrap();
+    std::thread::sleep(Duration::from_millis(300)); // channel (256) full, 257th send waits
+    let (streamed, summary) = drain(&session);
+    assert_eq!(streamed.len(), 257);
+    assert!(summary.truncated);
+}
+
+#[test]
+fn submatch_collection_is_bounded_by_max_columns() {
+    let dir = TempDir::new("dense");
+    let file = dir.write("f.txt", format!("{}\n", "a".repeat(100_000)).as_bytes());
+    let mut r = req("a", &file);
+    r.max_columns = Some(100);
+    let res = search_blocking(r, CancelToken::new(None)).unwrap();
+    let m = &res.matches[0];
+    assert!(m.line_truncated);
+    assert!(
+        m.submatches.len() <= 101,
+        "{} submatches",
+        m.submatches.len()
+    );
+}
+
+#[test]
+fn multiline_bom_file_reserves_decoding_budget() {
+    let dir = TempDir::new("bom");
+    let body = [b"HIT\n".as_slice(), &vec![b'x'; 300 * 1024]].concat();
+    let plain = dir.write("plain.txt", &body);
+    let bom = dir.write("bom.txt", &[[0xEF, 0xBB, 0xBF].as_slice(), &body].concat());
+    let limits = Limits {
+        multiline_budget: MIB,
+        ..Limits::default()
+    };
+    for (path, expect_skip) in [(plain, false), (bom, true)] {
+        let mut r = req("HIT", &path);
+        r.multiline = true;
+        let res = search_with_limits(r, CancelToken::new(None), limits).unwrap();
+        assert_eq!(res.matches.is_empty(), expect_skip, "{path}");
+        assert_eq!(
+            !res.warnings.is_empty(),
+            expect_skip,
+            "{path}: {:?}",
+            res.warnings
+        );
+    }
+}
+
+/// A reader that yields one line, then blocks until released.
+struct GatedReader {
+    first: Option<Vec<u8>>,
+    gate: mpsc::Receiver<()>,
+}
+
+impl Read for GatedReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if let Some(mut line) = self.first.take() {
+            let n = line.len().min(buf.len());
+            buf[..n].copy_from_slice(&line[..n]);
+            let rest = line.split_off(n);
+            if !rest.is_empty() {
+                self.first = Some(rest);
+            }
+            return Ok(n);
+        }
+        let _ = self.gate.recv();
+        Ok(0)
+    }
+}
+
+#[test]
+fn match_without_after_context_is_sent_before_the_file_ends() {
+    use grep_regex::RegexMatcher;
+    use grep_searcher::SearcherBuilder;
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let (release, gate) = mpsc::channel();
+    let searching = std::thread::spawn(move || {
+        let matcher = RegexMatcher::new("HIT").unwrap();
+        let mut sink =
+            super::support::test_sink("gated", tx, CancelToken::new(None), matcher.clone());
+        let reader = GatedReader {
+            first: Some(b"HIT now\n".to_vec()),
+            gate,
+        };
+        SearcherBuilder::new()
+            .line_number(true)
+            .build()
+            .search_reader(&matcher, reader, &mut sink)
+            .unwrap();
+    });
+    let first = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("match held until the file ended");
+    assert_eq!(first.line, "HIT now");
+    release.send(()).unwrap();
+    searching.join().unwrap();
 }

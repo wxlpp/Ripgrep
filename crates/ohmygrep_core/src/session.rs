@@ -78,18 +78,19 @@ impl SearchSession {
             return Err(OhMyGrepError::InvalidArguments("session finished".into()));
         }
         if self.cancel.is_cancelled() {
-            return self.finish(Vec::new());
+            // Buffered matches are dropped, so the result is incomplete even if the walk had ended.
+            return self.finish(Vec::new(), true);
         }
         let mut matches = Vec::new();
         match self.rx.recv() {
             Ok(m) => matches.push(m),
-            Err(_) => return self.finish(matches),
+            Err(_) => return self.finish(matches, false),
         }
         while matches.len() < max {
             match self.rx.try_recv() {
                 Ok(m) => matches.push(m),
                 Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => return self.finish(matches),
+                Err(TryRecvError::Disconnected) => return self.finish(matches, false),
             }
         }
         Ok(SearchBatch {
@@ -100,7 +101,11 @@ impl SearchSession {
 
     /// Joins the walk. Only called once the channel is disconnected or the token is
     /// cancelled, so the worker is finished or exits at its next stop check.
-    fn finish(&self, matches: Vec<SearchMatch>) -> Result<SearchBatch, OhMyGrepError> {
+    fn finish(
+        &self,
+        matches: Vec<SearchMatch>,
+        dropped_buffered: bool,
+    ) -> Result<SearchBatch, OhMyGrepError> {
         self.finished.store(true, Ordering::SeqCst);
         let worker = self
             .worker
@@ -108,9 +113,10 @@ impl SearchSession {
             .unwrap_or_else(PoisonError::into_inner)
             .take()
             .ok_or_else(|| OhMyGrepError::InvalidArguments("session finished".into()))?;
-        let summary = worker
+        let mut summary = worker
             .join()
             .map_err(|_| OhMyGrepError::InternalPanic("search thread panicked".into()))??;
+        summary.cancelled |= dropped_buffered;
         Ok(SearchBatch {
             matches,
             summary: Some(summary),
@@ -122,6 +128,7 @@ impl Drop for SearchSession {
     fn drop(&mut self) {
         // Never join here: the last reference may be released on a Swift
         // cooperative thread. The worker exits at its next stop check.
+        // This cancels the token given to `start`, so tokens must not be shared.
         self.cancel.cancel();
     }
 }

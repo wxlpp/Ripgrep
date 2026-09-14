@@ -207,25 +207,28 @@ fn search_file(
         .after_context(req.after_context as usize)
         .multi_line(req.multiline)
         .binary_detection(binary_detection(req, explicit));
-    if !req.multiline {
-        builder.heap_limit(Some(shared.limits.line_heap));
-    }
-    let mut searcher = builder.build();
+    let stop_on_limit = req.after_context == 0;
 
     let file = match std::fs::File::open(entry.path()) {
         Ok(f) => f,
         Err(err) => return shared.warnings.push(path, err.to_string()),
     };
     let result = if req.multiline {
-        match read_for_multiline(file, shared) {
-            Ok(Some((buf, _guard))) => searcher.search_slice(matcher, &buf, &mut sink),
+        match read_for_multiline(file, shared, stop_on_limit) {
+            Ok(Some((buf, _guards))) => {
+                // A BOM makes grep-searcher decode into a second buffer; cap it at
+                // the extra budget reserved for it.
+                builder.heap_limit(Some(DECODE_FACTOR * buf.len() + DECODE_SLACK));
+                builder.build().search_slice(matcher, &buf, &mut sink)
+            }
             Ok(None) => return,
             Err(message) => return shared.warnings.push(path, message),
         }
     } else {
-        searcher.search_reader(
+        builder.heap_limit(Some(shared.limits.line_heap));
+        builder.build().search_reader(
             matcher,
-            StoppableReader::new(file, Arc::clone(shared)),
+            StoppableReader::new(file, Arc::clone(shared), stop_on_limit),
             &mut sink,
         )
     };
@@ -236,10 +239,24 @@ fn search_file(
 
 /// Reads a whole file under the shared multiline budget. `Ok(None)` means the
 /// search stopped while waiting for budget.
+/// Budget reservations held for as long as a multiline buffer is alive.
+type BudgetGuards = Vec<crate::shared::BudgetGuard>;
+
+/// Decoding a BOM-prefixed buffer can take up to this many times its size.
+const DECODE_FACTOR: usize = 3;
+const DECODE_SLACK: usize = 64 * 1024;
+
+fn has_bom(buf: &[u8]) -> bool {
+    buf.starts_with(&[0xEF, 0xBB, 0xBF])
+        || buf.starts_with(&[0xFF, 0xFE])
+        || buf.starts_with(&[0xFE, 0xFF])
+}
+
 fn read_for_multiline(
     file: std::fs::File,
     shared: &Arc<Shared>,
-) -> Result<Option<(Vec<u8>, crate::shared::BudgetGuard)>, String> {
+    stop_on_limit: bool,
+) -> Result<Option<(Vec<u8>, BudgetGuards)>, String> {
     let budget = shared.limits.multiline_budget;
     let too_big = || {
         format!(
@@ -258,14 +275,25 @@ fn read_for_multiline(
         return Ok(None);
     };
     let mut buf = Vec::with_capacity(len);
-    StoppableReader::new(file, Arc::clone(shared))
+    StoppableReader::new(file, Arc::clone(shared), stop_on_limit)
         .take(len as u64 + 1)
         .read_to_end(&mut buf)
         .map_err(|e| e.to_string())?;
     if buf.len() > len {
         return Err("skipped: file grew while being read".into());
     }
-    Ok(Some((buf, guard)))
+    let mut guards = vec![guard];
+    if has_bom(&buf) {
+        let extra = DECODE_FACTOR * len + DECODE_SLACK;
+        if len + extra > budget {
+            return Err(too_big());
+        }
+        match shared.reserve_multiline(extra) {
+            Some(guard) => guards.push(guard),
+            None => return Ok(None),
+        }
+    }
+    Ok(Some((buf, guards)))
 }
 
 pub fn build_walker(req: &SearchRequest) -> Result<WalkBuilder, OhMyGrepError> {
