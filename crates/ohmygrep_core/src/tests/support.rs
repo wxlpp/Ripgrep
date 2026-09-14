@@ -1,6 +1,12 @@
-use super::options::SearchRequest;
+use super::cancel::CancelToken;
+use super::options::{SearchMatch, SearchRequest};
+use super::shared::{Limits, Shared};
+use super::sink::{ChannelSink, SinkConfig};
+use crossbeam_channel::Sender;
+use grep_matcher::Matcher;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 /// Unique temp directory removed on drop; lets tests build fixtures outside any git checkout.
 pub struct TempDir(PathBuf);
@@ -45,4 +51,21 @@ pub fn req(pattern: &str, path: &str) -> SearchRequest {
         include_hidden: true,
         ..Default::default()
     }
+}
+
+/// A sink over a fresh shared state without limits, for driving grep-searcher directly.
+pub fn test_sink<M: Matcher>(
+    path: &str,
+    tx: Sender<SearchMatch>,
+    cancel: Arc<CancelToken>,
+    matcher: M,
+) -> ChannelSink<M> {
+    let shared = Arc::new(Shared::new(cancel, None, Limits::default()));
+    let config = SinkConfig {
+        before_context: 0,
+        after_context: 0,
+        max_columns: None,
+        explicit: false,
+    };
+    ChannelSink::new(path.to_string(), tx, shared, matcher, config)
 }

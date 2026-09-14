@@ -70,6 +70,13 @@ final class WorkingDirectoryTests: XCTestCase {
         XCTAssertTrue(out.hasSuffix(":1:HIT root"), out)
     }
 
+    func testTruncationIsReportedInTextAndJSONOutput() async throws {
+        let text = try await OhMyGrep.run("-m 1 HIT", workingDirectory: dir.path)
+        XCTAssertTrue(text.hasSuffix("\nresults truncated at 1 matches"), text)
+        let json = try await OhMyGrep.run("--json -m 1 HIT", workingDirectory: dir.path)
+        XCTAssertEqual(json.split(separator: "\n").last, #"{"truncated":{"limit":1}}"#)
+    }
+
     func testWarningsAppearInTextAndJSONOutput() async throws {
         let blob = dir.appendingPathComponent("blob.dat")
         try Data("x\u{0}y HIT\n".utf8).write(to: blob)

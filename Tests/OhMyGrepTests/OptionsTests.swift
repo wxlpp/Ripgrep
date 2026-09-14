@@ -12,7 +12,8 @@ final class OptionsTests: XCTestCase {
         XCTAssertFalse(o.includeHidden)
         XCTAssertEqual(o.beforeContext, 0)
         XCTAssertEqual(o.afterContext, 0)
-        XCTAssertNil(o.maxMatches)
+        XCTAssertEqual(o.maxMatches, 10_000)
+        XCTAssertEqual(o.maxColumns, 4096)
         XCTAssertNil(o.timeout)
         XCTAssertTrue(o.include.isEmpty)
         XCTAssertTrue(o.exclude.isEmpty)
@@ -35,12 +36,29 @@ final class OptionsTests: XCTestCase {
         XCTAssertNotEqual(o, OhMyGrep.Options())
     }
 
+    func testExplicitNullLimitMeansUnlimited() throws {
+        let json = Data(#"{"maxMatches": null, "maxColumns": null}"#.utf8)
+        let o = try JSONDecoder().decode(OhMyGrep.Options.self, from: json)
+        XCTAssertNil(o.maxMatches)
+        XCTAssertNil(o.maxColumns)
+    }
+
+    func testMaxColumnsMustBePositive() async throws {
+        var o = OhMyGrep.Options(); o.maxColumns = 0
+        do {
+            _ = try await OhMyGrep.search(pattern: "x", in: ["/"], options: o)
+            XCTFail("expected throw")
+        } catch let e as OhMyGrep.Error {
+            guard case .invalidArguments = e else { return XCTFail("wrong error: \(e)") }
+        }
+    }
+
     func testDecodingMissingKeysUsesDefaults() throws {
         let o = try JSONDecoder().decode(OhMyGrep.Options.self, from: Data(#"{"beforeContext": 1}"#.utf8))
         XCTAssertEqual(o.beforeContext, 1)
         XCTAssertTrue(o.respectGitignore)
         XCTAssertFalse(o.searchBinary)
-        XCTAssertNil(o.maxMatches)
+        XCTAssertEqual(o.maxMatches, 10_000)
     }
 
     func testCodableRoundtrip() throws {
@@ -53,7 +71,7 @@ final class OptionsTests: XCTestCase {
         XCTAssertEqual(decoded.beforeContext, 2)
         XCTAssertEqual(decoded.include, ["*.swift"])
         XCTAssertEqual(decoded.timeout, .milliseconds(500))
-        XCTAssertNil(decoded.maxMatches)
+        XCTAssertEqual(decoded.maxMatches, 10_000)
         XCTAssertNil(decoded.maxFiles)
         XCTAssertNil(decoded.maxFileSizeBytes)
     }

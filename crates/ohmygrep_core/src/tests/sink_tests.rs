@@ -1,22 +1,16 @@
-use super::sink::ChannelSink;
 use crossbeam_channel::unbounded;
 use grep_regex::RegexMatcher;
 use grep_searcher::SearcherBuilder;
-use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
 
 #[test]
 fn sink_emits_match_per_line() {
     let (tx, rx) = unbounded();
-    let counter = Arc::new(AtomicUsize::new(0));
     let m = RegexMatcher::new("foo").unwrap();
-    let mut sink = ChannelSink::new(
-        "/tmp/test.txt".into(),
+    let mut sink = super::support::test_sink(
+        "/tmp/test.txt",
         tx,
         crate::cancel::CancelToken::new(None),
-        Arc::clone(&counter),
         m.clone(),
-        0,
     );
     let body = b"foo\nbar\nfoo\n";
     SearcherBuilder::new()

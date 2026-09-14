@@ -66,11 +66,13 @@ extension OhMyGrep {
             includeHidden: parsed.hidden,
             beforeContext: before,
             afterContext: after,
-            maxMatches: parsed.maxCount,
+            maxMatches: parsed.maxCount ?? Options().maxMatches,
             maxFiles: parsed.maxFiles,
             maxFileSizeBytes: maxBytes,
             timeout: parsed.timeoutMs.map { .milliseconds($0) },
-            searchBinary: parsed.text
+            searchBinary: parsed.text,
+            // rg: `-M 0` means no limit.
+            maxColumns: parsed.maxColumns.map { $0 == 0 ? nil : $0 } ?? Options().maxColumns
         )
 
         let paths = parsed.paths.isEmpty ? ["."] : parsed.paths

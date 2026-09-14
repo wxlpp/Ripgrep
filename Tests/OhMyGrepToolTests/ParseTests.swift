@@ -16,6 +16,15 @@ final class ParseTests: XCTestCase {
         XCTAssertEqual(p.options.exclude, ["*.test.swift"])
     }
 
+    func testLimitDefaultsAndMaxColumnsFlag() throws {
+        let plain = try OhMyGrep.parse("x").options
+        XCTAssertEqual(plain.maxMatches, 10_000)
+        XCTAssertEqual(plain.maxColumns, 4096)
+        XCTAssertEqual(try OhMyGrep.parse("x -M 80").options.maxColumns, 80)
+        XCTAssertNil(try OhMyGrep.parse("x --max-columns 0").options.maxColumns)
+        XCTAssertEqual(try OhMyGrep.parse("x -m 3").options.maxMatches, 3)
+    }
+
     func testNoRequireGitFlag() throws {
         XCTAssertTrue(try OhMyGrep.parse("x").options.requireGit)
         XCTAssertFalse(try OhMyGrep.parse("x --no-require-git").options.requireGit)

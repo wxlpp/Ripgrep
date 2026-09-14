@@ -1,9 +1,6 @@
-use super::sink::ChannelSink;
 use crossbeam_channel::unbounded;
 use grep_regex::RegexMatcher;
 use grep_searcher::SearcherBuilder;
-use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
 
 /// Build input with `n` matching lines so the cancel-check cadence (every 100
 /// events) is guaranteed to trigger at least once mid-search, leaving some
@@ -32,20 +29,12 @@ fn cancel_ok_false_preserves_matches_collected_before_cancel() {
     // token is guaranteed to trip on event 100, with 99 matches already pending.
     let input = make_input(150);
     let (tx, rx) = unbounded();
-    let counter = Arc::new(AtomicUsize::new(0));
     let matcher = RegexMatcher::new("match").unwrap();
 
     // Pre-tripped cancel token (deadline = now + 0ms → already past).
     let cancel = crate::cancel::CancelToken::new(Some(0));
 
-    let mut sink = ChannelSink::new(
-        "synthetic".into(),
-        tx,
-        cancel,
-        Arc::clone(&counter),
-        matcher.clone(),
-        0,
-    );
+    let mut sink = super::support::test_sink("synthetic", tx, cancel, matcher.clone());
 
     // search_slice returns Ok(()) when the Sink returns Ok(false) (graceful stop);
     // it returns Err(_) only if the Sink returns Err(_).
@@ -103,18 +92,10 @@ fn cancel_ok_false_preserves_matches_collected_before_cancel() {
 fn cancel_ok_false_search_slice_returns_ok_not_err() {
     let input = make_input(150);
     let (tx, _rx) = unbounded();
-    let counter = Arc::new(AtomicUsize::new(0));
     let matcher = RegexMatcher::new("match").unwrap();
     let cancel = crate::cancel::CancelToken::new(Some(0));
 
-    let mut sink = ChannelSink::new(
-        "synthetic".into(),
-        tx,
-        cancel,
-        Arc::clone(&counter),
-        matcher.clone(),
-        0,
-    );
+    let mut sink = super::support::test_sink("synthetic", tx, cancel, matcher.clone());
 
     let result: Result<(), _> = SearcherBuilder::new()
         .line_number(true)

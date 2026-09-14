@@ -276,6 +276,26 @@ void uniffi_ohmygrep_core_fn_method_canceltoken_cancel(void*_Nonnull ptr, RustCa
 int8_t uniffi_ohmygrep_core_fn_method_canceltoken_is_cancelled(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OHMYGREP_CORE_FN_CLONE_SEARCHSESSION
+#define UNIFFI_FFIDEF_UNIFFI_OHMYGREP_CORE_FN_CLONE_SEARCHSESSION
+void*_Nonnull uniffi_ohmygrep_core_fn_clone_searchsession(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OHMYGREP_CORE_FN_FREE_SEARCHSESSION
+#define UNIFFI_FFIDEF_UNIFFI_OHMYGREP_CORE_FN_FREE_SEARCHSESSION
+void uniffi_ohmygrep_core_fn_free_searchsession(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OHMYGREP_CORE_FN_CONSTRUCTOR_SEARCHSESSION_START
+#define UNIFFI_FFIDEF_UNIFFI_OHMYGREP_CORE_FN_CONSTRUCTOR_SEARCHSESSION_START
+void*_Nonnull uniffi_ohmygrep_core_fn_constructor_searchsession_start(RustBuffer request, void*_Nonnull cancel, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OHMYGREP_CORE_FN_METHOD_SEARCHSESSION_NEXT_BATCH
+#define UNIFFI_FFIDEF_UNIFFI_OHMYGREP_CORE_FN_METHOD_SEARCHSESSION_NEXT_BATCH
+RustBuffer uniffi_ohmygrep_core_fn_method_searchsession_next_batch(void*_Nonnull ptr, uint32_t max, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_OHMYGREP_CORE_FN_FUNC_SEARCH_BLOCKING
 #define UNIFFI_FFIDEF_UNIFFI_OHMYGREP_CORE_FN_FUNC_SEARCH_BLOCKING
 RustBuffer uniffi_ohmygrep_core_fn_func_search_blocking(RustBuffer request, void*_Nonnull cancel, RustCallStatus *_Nonnull out_status
@@ -579,9 +599,21 @@ uint16_t uniffi_ohmygrep_core_checksum_method_canceltoken_is_cancelled(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OHMYGREP_CORE_CHECKSUM_METHOD_SEARCHSESSION_NEXT_BATCH
+#define UNIFFI_FFIDEF_UNIFFI_OHMYGREP_CORE_CHECKSUM_METHOD_SEARCHSESSION_NEXT_BATCH
+uint16_t uniffi_ohmygrep_core_checksum_method_searchsession_next_batch(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_OHMYGREP_CORE_CHECKSUM_CONSTRUCTOR_CANCELTOKEN_NEW
 #define UNIFFI_FFIDEF_UNIFFI_OHMYGREP_CORE_CHECKSUM_CONSTRUCTOR_CANCELTOKEN_NEW
 uint16_t uniffi_ohmygrep_core_checksum_constructor_canceltoken_new(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OHMYGREP_CORE_CHECKSUM_CONSTRUCTOR_SEARCHSESSION_START
+#define UNIFFI_FFIDEF_UNIFFI_OHMYGREP_CORE_CHECKSUM_CONSTRUCTOR_SEARCHSESSION_START
+uint16_t uniffi_ohmygrep_core_checksum_constructor_searchsession_start(void
     
 );
 #endif
