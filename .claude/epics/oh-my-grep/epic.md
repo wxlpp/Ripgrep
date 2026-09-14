@@ -2,8 +2,8 @@
 name: oh-my-grep
 status: in-progress
 created: 2026-09-14T07:12:45Z
-updated: 2026-09-14T08:22:54Z
-progress: 42%
+updated: 2026-09-14T09:23:50Z
+progress: 57%
 prd: .claude/prds/oh-my-grep.md
 github: https://github.com/wxlpp/oh-my-grep/issues/5
 ---
@@ -72,7 +72,7 @@ Serial for tasks touching `sink.rs`/`search.rs`/`Options` (001 → 002 → 003 �
 - [x] #6 - Rename RipgrepKit to oh-my-grep end to end (parallel: false)
 - [x] #7 - Result correctness: contiguous context, separators, CRLF, binary detection, -A/-B 0 (parallel: false)
 - [x] #8 - Ignore rules, required paths, workingDirectory, warnings, symlink loop (parallel: false)
-- [ ] #9 - Memory limits and streaming search API (parallel: false)
+- [x] #9 - Memory limits and streaming search API (parallel: false)
 - [ ] #10 - Packaging: static-library XCFramework, privacy manifest, release profile, release pipeline (parallel: false)
 - [ ] #11 - PR CI with iOS simulator tests and nightly cargo-fuzz (parallel: true)
 - [ ] #12 - Documentation, Submatch ranges, tool schema, device re-verification (parallel: false)
